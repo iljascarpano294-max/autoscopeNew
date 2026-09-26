@@ -2,7 +2,8 @@
 """The chat service: one serialized reply loop per session."""
 import asyncio
 
-from ...message import AssistantMsg, UserMsg
+from ...message import AssistantMsg, Msg, UserMsg
+from ...event import AgentEvent, TextBlockDeltaEvent
 from ._session import SessionNotFound, SessionService
 
 
@@ -20,6 +21,34 @@ class ChatService:
     def __init__(self, sessions: SessionService) -> None:
         self._sessions = sessions
         self._locks: dict[str, asyncio.Lock] = {}
+
+    async def stream(self, session_id: str, message: str):
+        """Like :meth:`send`, but yield the agent's events as they happen,
+        ending with the final message. Same locking and persistence.
+
+        Yields:
+            `AgentEvent | Msg`:
+                The reply stream, including exactly one final Msg.
+        """
+        try:
+            record = self._sessions.get(session_id)
+        except SessionNotFound:
+            record = await self._sessions.load(session_id)
+        lock = self._locks.get(session_id)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._locks[session_id] = lock
+
+        async with lock:
+            user_msg = UserMsg(name="user", content=message)
+            reply = None
+            async for item in record.agent.reply_stream(user_msg):
+                if isinstance(item, Msg):
+                    reply = item
+                yield item
+            if reply is not None:
+                record.last_active_at = reply.finished_at or record.last_active_at
+                await self._sessions.persist(record, [user_msg, reply])
 
     async def send(self, session_id: str, message: str) -> AssistantMsg:
         """Append the message to the session and return the agent reply.
