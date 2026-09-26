@@ -1,7 +1,11 @@
 """Small shared factories used by stage 1 data models, plus the JSON
 argument repair shared by tool dispatch."""
 
+import asyncio
+import functools
+import inspect
 import json
+import types
 from datetime import datetime
 from uuid import uuid4
 
@@ -130,3 +134,41 @@ json.loads(your_tool_arguments)
 
 **You should recorrect the arguments in JSON format.**</system-reminder>""",
     )
+
+
+async def _is_async_func(func) -> bool:
+    """Check if the given function is an async function, including
+    coroutine functions, async generators, and coroutine objects.
+    """
+
+    return (
+        inspect.iscoroutinefunction(func)
+        or inspect.isasyncgenfunction(func)
+        or isinstance(func, types.CoroutineType)
+        or isinstance(func, types.GeneratorType)
+        and asyncio.iscoroutine(func)
+        or isinstance(func, functools.partial)
+        and await _is_async_func(func.func)
+    )
+
+
+async def _execute_async_or_sync_func(func, *args, **kwargs):
+    """Execute an async or sync function based on its type.
+
+    Args:
+        func (`Callable`):
+            The function to be executed, which can be either async or sync.
+        *args (`Any`):
+            Positional arguments to be passed to the function.
+        **kwargs (`Any`):
+            Keyword arguments to be passed to the function.
+
+    Returns:
+        `Any`:
+            The result of the function execution.
+    """
+
+    if await _is_async_func(func):
+        return await func(*args, **kwargs)
+
+    return func(*args, **kwargs)

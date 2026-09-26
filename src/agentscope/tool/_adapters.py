@@ -18,6 +18,10 @@ from ..message import (
     TextBlock,
     ToolResultState,
 )
+from ..permission import (
+    PermissionBehavior,
+    PermissionDecision,
+)
 
 
 class FunctionTool(ToolBase):
@@ -48,6 +52,7 @@ class FunctionTool(ToolBase):
         is_read_only: bool = False,
         is_state_injected: bool = False,
         middlewares: list[ToolMiddlewareBase] | None = None,
+        permission: PermissionDecision | None = None,
     ) -> None:
         """Initialize the FunctionTool.
 
@@ -74,6 +79,9 @@ class FunctionTool(ToolBase):
                 Whether this tool requires agent state injection.
             middlewares (`list[ToolMiddlewareBase] | None`, optional):
                 Tool middlewares wrapping the tool execution.
+            permission (`PermissionDecision | None`, optional):
+                The permission decision of this tool. If not provided, the
+                user will be asked to confirm the tool call.
         """
         super().__init__(middlewares=middlewares)
         self.name = name or func.__name__
@@ -94,6 +102,28 @@ class FunctionTool(ToolBase):
         self.is_external_tool = False
         self.is_mcp = False
         self._func = func
+        self._permission = permission
+
+    async def check_permissions(
+        self,
+        *_args: Any,
+        **_kwargs: Any,
+    ) -> PermissionDecision:
+        """Check permissions for the tool usage.
+
+        Returns:
+            `PermissionDecision`:
+                The permission decision given in the constructor, or asking
+                the user to confirm the tool call if not provided.
+        """
+        if self._permission is not None:
+            return self._permission
+
+        return PermissionDecision(
+            behavior=PermissionBehavior.ASK,
+            message="Custom function tools must be explicitly allowed "
+            "by the user.",
+        )
 
     async def call(
         self,

@@ -10,6 +10,12 @@ import jsonschema
 from pydantic import BaseModel
 
 from ..message import ToolResultState
+from ..permission import (
+    PermissionContext,
+    PermissionDecision,
+    PermissionRule,
+    PermissionBehavior,
+)
 from ._response import ToolChunk
 from ._utils import _remove_title_field
 
@@ -245,6 +251,93 @@ class ToolBase(ABC):
                     yield chunk
 
         return execute_chain(**kwargs)
+
+    @abstractmethod
+    async def check_permissions(
+        self,
+        tool_input: dict[str, Any],
+        context: PermissionContext,
+    ) -> PermissionDecision:
+        """Check permissions for the tool usage."""
+
+    async def check_read_only(
+        self,
+        tool_input: dict[str, Any],
+    ) -> bool:
+        """Decide whether this specific invocation is read-only.
+
+        Returns the static :attr:`is_read_only` attribute by default.
+        Subclasses with input-dependent semantics (e.g. ``Bash``) should
+        override this to inspect ``tool_input`` — for example, ``Bash`` is
+        statically marked as not read-only but ``ls -a`` is in fact
+        read-only.
+
+        Should be cheap — the permission engine may call this before the
+        full :meth:`check_permissions` flow.
+
+        Args:
+            tool_input (`dict[str, Any]`):
+                The tool input data for this invocation.
+
+        Returns:
+            `bool`:
+                ``True`` if this invocation is read-only, ``False`` otherwise.
+        """
+        return self.is_read_only
+
+    async def match_rule(
+        self,
+        rule_content: str | None,
+        tool_input: dict[str, Any],
+    ) -> bool:
+        """Check if a permission rule matches the tool input.
+
+        .. note:: This is an optional method. A rule with no content (``None``)
+        is a tool-name-level rule that matches every invocation; a rule
+        with content requires the tool to override this method with its
+        own matching logic, otherwise it returns ``False``.
+
+        Args:
+            rule_content (`str | None`):
+                The rule pattern to match. ``None`` means "match all
+                invocations of this tool" (tool-name-level rule).
+            tool_input (`dict[str, Any]`):
+                The tool input data
+
+        Returns:
+            `bool`:
+                True if the rule matches, False otherwise
+        """
+        # None rule_content = tool-name-level rule, matches everything
+        return rule_content is None
+
+    async def generate_suggestions(
+        self,
+        tool_input: dict[str, Any],
+    ) -> List[PermissionRule]:
+        """Generate suggested permission rules for the tool input.
+
+        .. note:: Suggest a single tool-name-level rule (``rule_content=None``)
+        that allows all invocations of this tool. Tools can override this to
+        provide finer-grained suggestions.
+
+        Args:
+            tool_input (`dict[str, Any]`):
+                The tool input data
+
+        Returns:
+            `List[PermissionRule]`:
+                List of suggested permission rules (usually 1, max 5 for
+                compound operations)
+        """
+        return [
+            PermissionRule(
+                tool_name=self.name,
+                rule_content=None,
+                behavior=PermissionBehavior.ALLOW,
+                source="suggested",
+            ),
+        ]
 
     async def check_external_result(
         self,

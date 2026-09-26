@@ -36,6 +36,14 @@ class AddTool(ToolBase):
         super().__init__(**kwargs)
         self.executions = 0
 
+
+    async def check_permissions(self, tool_input, context):
+        from agentscope.permission import PermissionBehavior, PermissionDecision
+
+        return PermissionDecision(
+            behavior=PermissionBehavior.ALLOW,
+            message="test tool is always allowed",
+        )
     async def call(self, *, a: int, b: int) -> ToolChunk:
         self.executions += 1
         return ToolChunk(content=[TextBlock(text=str(a + b))])
@@ -52,6 +60,14 @@ class ExplodingTool(ToolBase):
         super().__init__(**kwargs)
         self.executions = 0
 
+
+    async def check_permissions(self, tool_input, context):
+        from agentscope.permission import PermissionBehavior, PermissionDecision
+
+        return PermissionDecision(
+            behavior=PermissionBehavior.ALLOW,
+            message="test tool is always allowed",
+        )
     async def call(self) -> ToolChunk:
         self.executions += 1
         raise ValueError("boom")
@@ -65,6 +81,14 @@ class StateTool(ToolBase):
     is_read_only = True
     is_state_injected = True
 
+
+    async def check_permissions(self, tool_input, context):
+        from agentscope.permission import PermissionBehavior, PermissionDecision
+
+        return PermissionDecision(
+            behavior=PermissionBehavior.ALLOW,
+            message="test tool is always allowed",
+        )
     async def call(self, _agent_state: AgentState | None = None) -> ToolChunk:
         size = len(_agent_state.context) if _agent_state is not None else -1
         return ToolChunk(content=[TextBlock(text=f"context={size}")])
@@ -274,10 +298,18 @@ def test_function_tool_async_function_and_json_result() -> None:
 
 
 def test_invalid_input_schema_rejected_at_registration() -> None:
+    from agentscope.permission import PermissionBehavior, PermissionDecision
+
     class BadTool(ToolBase):
         name = "bad"
         description = "Bad schema."
         input_schema = {"type": "string"}
+
+        async def check_permissions(self, tool_input, context):
+            return PermissionDecision(
+                behavior=PermissionBehavior.ALLOW,
+                message="test tool is always allowed",
+            )
 
         async def call(self) -> ToolChunk:
             return ToolChunk(content=[])

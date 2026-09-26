@@ -39,6 +39,14 @@ class AddTool(ToolBase):
     is_concurrency_safe = True
     is_read_only = True
 
+
+    async def check_permissions(self, tool_input, context):
+        from agentscope.permission import PermissionBehavior, PermissionDecision
+
+        return PermissionDecision(
+            behavior=PermissionBehavior.ALLOW,
+            message="test tool is always allowed",
+        )
     async def call(self, *, a: int, b: int) -> ToolChunk:
         return ToolChunk(content=[TextBlock(text=str(a + b))])
 
