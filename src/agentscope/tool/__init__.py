@@ -14,6 +14,7 @@ from ._builtin import (
     Read,
     Write,
 )
+from ..mcp import MCPTool
 
 __all__ = [
     # Basic tool related types and functions
@@ -34,4 +35,6 @@ __all__ = [
     "Grep",
     "Read",
     "Write",
+    # MCP tools (hosted in agentscope.mcp, re-exported like the reference)
+    "MCPTool",
 ]
