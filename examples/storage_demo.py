@@ -59,7 +59,7 @@ async def main() -> None:
         record = await sessions.load(session_id)
         print(f"restored history: {len(record.agent.state.context)} messages")
         reply = await chat.send(session_id, "question three")
-        print(f"turn 3: {reply}")
+        print(f"turn 3: {reply.get_text_content()}")
         await storage.close()
 
 
