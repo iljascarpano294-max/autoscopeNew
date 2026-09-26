@@ -15,7 +15,8 @@
 - 阶段 3 已在 `codex/stage-3-minimal-agent` 分支完成非流式多轮文本 Agent。
 - 阶段 4 已在 `codex/stage-4-tool-loop` 分支完成工具调用闭环（ToolBase/ToolChunk/ToolResponse/Toolkit/FunctionTool + Agent 推理-行动循环）。
 - 阶段 5 已在 `codex/stage-5-events-streaming` 分支完成事件与流式输出（事件模型与 event_to_message、模型流式契约、reply_stream 事件生产、console.print_stream）。
-- 阶段 6 已在 `codex/stage-6-state-permission-interrupt` 分支完成状态、权限与中断（权限数据模型、PermissionEngine 五模式判定、ASK 停靠与确认恢复、中断清理与状态序列化）。下一步是阶段 7：中间件与上下文。每阶段的详细实施任务见 `docs/superpowers/plans/`。
+- 阶段 6 已在 `codex/stage-6-state-permission-interrupt` 分支完成状态、权限与中断（权限数据模型、PermissionEngine 五模式判定、ASK 停靠与确认恢复、中断清理与状态序列化）。
+- 阶段 7 已在 `codex/stage-7-middleware-context` 分支完成中间件与上下文（MiddlewareBase 七钩子、洋葱执行器、BudgetMiddleware、ContextCompressionMiddleware）。下一步是阶段 8：工作空间、MCP 与 Skill。每阶段的详细实施任务见 `docs/superpowers/plans/`。
 
 ## 逐章实施计划
 

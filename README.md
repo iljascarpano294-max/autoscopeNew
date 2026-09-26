@@ -1,6 +1,6 @@
 # AgentScope 渐进式重建
 
-这是一个用于学习的 AgentScope 2.0 重建项目。参考仓库与固定提交见 [BASELINE.md](BASELINE.md)，阶段路线见 [PLAN.md](PLAN.md)。阶段 6 已接入权限引擎（ALLOW/DENY/ASK 三种决策）、确认停靠-恢复与中断清理；版本标记仍为 `0.0.0`，表示尚未完成参考项目的功能。
+这是一个用于学习的 AgentScope 2.0 重建项目。参考仓库与固定提交见 [BASELINE.md](BASELINE.md)，阶段路线见 [PLAN.md](PLAN.md)。阶段 7 已接入中间件系统（洋葱式钩子 + 系统提示变换）与预算/上下文压缩切片；版本标记仍为 `0.0.0`，表示尚未完成参考项目的功能。
 
 ## 运行阶段 0
 
@@ -48,3 +48,9 @@
 运行 `python examples/permission_demo.py` 可离线看到 ALLOW、DENY、ASK-确认、中断四条路径。调用链：`Agent._acting` 在执行每个工具调用前把解析后的参数交给 `PermissionEngine.check_permission`（判定顺序：deny 规则 → ask 规则 → 只读快路径 → 工具自身 `check_permissions` → allow 规则 → 模式兜底，五种模式各有独立方法）；ALLOW 直接执行；DENY 记一条 `ToolResultState.DENIED` 结果且不执行工具；ASK 把工具调用置为 ASKING 并在 `RequireUserConfirmEvent` 处停靠（流在此结束，无 ReplyEnd）。恢复时向 `reply_stream` 传入 `UserConfirmResultEvent`：ID 不在等待集合即抛错（重复提交/错误 ID 均不执行），确认只执行一次，拒绝转为 DENIED 结果；`UserInterruptEvent` 把所有待定调用闭合为 INTERRUPTED 并以 `finished_reason="interrupted"` 结束。停靠/中断状态都在 `AgentState.context` 里，`model_dump_json()/model_validate_json()` 可直接往返。
 
 与参考实现的差异：`PermissionEngine` 与权限数据模型逐字迁入（危险路径辅助 `_is_dangerous_path`、工作目录检查随阶段 8 的文件工具引入）；恢复时沿用停靠回复的 reply_id（参考会为新 reply 生成新 ID），使结果并入同一条助手消息；外部执行事件（RequireExternalExecutionEvent）留到阶段 8/15。测试为 `tests/test_permission.py`、`tests/test_permission_engine.py`、`tests/test_agent_confirmation.py`、`tests/test_agent_interrupt.py`。
+
+## 阶段 7：中间件与上下文
+
+运行 `python examples/middleware_demo.py` 可看到钩子触发顺序与预算行为。调用链：`Agent` 接受 `middlewares` 列表；`on_reply` 包裹整个 reply 流，每轮 `on_reasoning` 包裹推理阶段（`_reasoning_impl` 以 ChatResponse 作为末项标记交回循环），其中 `on_model_call` 包裹原始模型调用；`on_check_permission` 包裹权限判定、`on_acting` 包裹原始 `toolkit.call_tool`（`_acting_impl` 不写上下文）；`on_system_prompt` 按注册顺序变换系统提示。洋葱执行器保证注册顺序进入、逆序退出，同层 `next_handler` 重复消费抛错；未覆写的钩子自动跳过，无中间件时行为与阶段 6 完全一致。`BudgetMiddleware(max_model_calls)` 把计数存进 `agent.state.middle_context`（按 reply_id 键控，ReplyEnd 清理），超额直接抛错不再请求模型；`ContextCompressionMiddleware(max_messages, keep_recent, summarize)` 在回复开始前把旧消息折叠为一条摘要消息，旧摘要文本原样并入、每批消息只压缩一次。
+
+与参考实现的差异：`MiddlewareBase` 逐字迁入；参考的 `ReplyBudgetControlMiddleware` 是 token 加权预算，本章按计划实现调用次数版 `BudgetMiddleware`，token 版随可观测性阶段再迁；压缩为计划指定的条数阈值+注入摘要函数（参考为 token 阈值+压缩工具+offloader），RAG/长期记忆/tracing 中间件分别留到阶段 13/16。测试为 `tests/test_middleware.py`、`tests/test_budget.py`、`tests/test_context_compression.py`、`tests/test_middleware_demo.py`。
