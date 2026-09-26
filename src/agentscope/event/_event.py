@@ -2,14 +2,16 @@
 """Event types for agent execution."""
 from datetime import datetime
 from enum import StrEnum
-from typing import Any, Dict, Literal, TypeAlias
+from typing import Any, Dict, List, Literal, TypeAlias
 
 from pydantic import BaseModel, Field, ConfigDict
 
 from .._utils._common import _generate_id
 from ..message import (
+    ToolCallBlock,
     ToolResultState,
 )
+from ..permission import PermissionRule
 from ..types import (
     ReplyFinishedReason,
     ErrorInfo,
@@ -253,6 +255,55 @@ class ToolResultEndEvent(EventBase):
     """Optional metadata attached to the tool result event."""
 
 
+class RequireUserConfirmEvent(EventBase):
+    """Require user confirm event."""
+
+    type: Literal[EventType.REQUIRE_USER_CONFIRM] = EventType.REQUIRE_USER_CONFIRM
+    """Event type."""
+    reply_id: str
+    """ID of the reply message associated with this run."""
+    tool_calls: List[ToolCallBlock]
+    """Tool calls pending user confirmation."""
+
+
+class ConfirmResult(BaseModel):
+    """Confirm result for a tool call."""
+
+    confirmed: bool
+    """Whether the user confirmed the tool call."""
+    tool_call: ToolCallBlock
+    """The tool call that was confirmed or rejected."""
+    rules: list[PermissionRule] | None = None
+    """The allowed permission rules for this tool call. This field is only
+    applicable when ``confirmed`` is True."""
+
+
+class UserConfirmResultEvent(EventBase):
+    """User confirm result event."""
+
+    type: Literal[EventType.USER_CONFIRM_RESULT] = EventType.USER_CONFIRM_RESULT
+    """Event type."""
+    reply_id: str
+    """ID of the reply message associated with this run."""
+    confirm_results: list[ConfirmResult]
+    """Confirmation results for each pending tool call."""
+
+
+class UserInterruptEvent(EventBase):
+    """User-initiated interrupt targeting a parked reply.
+
+    Delivered to :meth:`Agent.reply_stream` (or :meth:`Agent.reply`) to
+    abort a reply that is currently waiting on user confirmation. On
+    receipt, the agent closes every pending tool call with an interrupted
+    tool result and ends the reply with ``INTERRUPTED``.
+    """
+
+    type: Literal[EventType.USER_INTERRUPT] = EventType.USER_INTERRUPT
+    """Event type."""
+    reply_id: str
+    """ID of the reply message this interrupt targets."""
+
+
 AgentEvent: TypeAlias = (
     ReplyStartEvent
     | ReplyEndEvent
@@ -267,4 +318,7 @@ AgentEvent: TypeAlias = (
     | ToolResultStartEvent
     | ToolResultTextDeltaEvent
     | ToolResultEndEvent
+    | RequireUserConfirmEvent
+    | UserConfirmResultEvent
+    | UserInterruptEvent
 )

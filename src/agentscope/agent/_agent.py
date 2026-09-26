@@ -1,7 +1,7 @@
-"""Minimal Agent: stage 4 reasoning-acting tool loop with stage 5 event
-streaming."""
+"""Minimal Agent: stages 4-6 tool loop, event streaming, permissions."""
 
 import inspect
+import json
 from typing import Any, AsyncGenerator
 
 from .._utils._common import _generate_id, _generate_timestamp
@@ -11,6 +11,7 @@ from ..event import (
     ModelCallStartEvent,
     ReplyEndEvent,
     ReplyStartEvent,
+    RequireUserConfirmEvent,
     TextBlockDeltaEvent,
     TextBlockEndEvent,
     TextBlockStartEvent,
@@ -20,6 +21,8 @@ from ..event import (
     ToolResultEndEvent,
     ToolResultStartEvent,
     ToolResultTextDeltaEvent,
+    UserConfirmResultEvent,
+    UserInterruptEvent,
 )
 from ..message import (
     Msg,
@@ -28,9 +31,11 @@ from ..message import (
     ToolCallBlock,
     ToolResultBlock,
     ToolCallState,
+    ToolResultState,
     Usage,
 )
 from ..model import ChatModelBase
+from ..permission import PermissionBehavior, PermissionEngine
 from ..state import AgentState
 from ..tool import ToolResponse, Toolkit
 from ..types import ReplyFinishedReason
@@ -45,12 +50,14 @@ class Agent:
         state: AgentState | None = None,
         toolkit: Toolkit | None = None,
         max_iters: int = 10,
+        permission_engine: PermissionEngine | None = None,
     ) -> None:
         self.name = name
         self._system_prompt = system_prompt
         self.model = model
         self.state = state if state is not None else AgentState()
         self.toolkit = toolkit
+        self.permission_engine = permission_engine
         if max_iters < 1:
             raise ValueError("max_iters must be at least 1.")
         self._max_iters = max_iters
@@ -73,17 +80,44 @@ class Agent:
 
     async def reply_stream(
         self,
-        inputs: Msg | list[Msg] | None = None,
+        inputs: Msg
+        | list[Msg]
+        | UserConfirmResultEvent
+        | UserInterruptEvent
+        | None = None,
     ) -> AsyncGenerator[AgentEvent | Msg, None]:
         """Run one reasoning-acting reply, yield events as they happen, and
-        finish with exactly one final Msg."""
+        finish with exactly one final Msg. A parked (ASK) confirmation ends
+        the stream on RequireUserConfirmEvent; pass a UserConfirmResultEvent
+        to resume, or a UserInterruptEvent to abort it."""
+        if isinstance(inputs, UserInterruptEvent):
+            async for item in self._handle_interrupt(inputs):
+                yield item
+            return
+
+        if isinstance(inputs, UserConfirmResultEvent):
+            if not self.state.context:
+                raise ValueError(
+                    "Agent needs an existing conversation context to resume.",
+                )
+            yield ReplyStartEvent(reply_id=self.state.reply_id, name=self.name)
+            async for item in self._apply_confirm_results(inputs):
+                yield item
+            async for item in self._reasoning_acting_loop():
+                yield item
+            return
+
         await self.observe(inputs)
         if not self.state.context:
             raise ValueError("Agent needs an input or existing conversation context.")
 
         self.state.reply_id = _generate_id()
         yield ReplyStartEvent(reply_id=self.state.reply_id, name=self.name)
+        async for item in self._reasoning_acting_loop():
+            yield item
 
+    async def _reasoning_acting_loop(self) -> AsyncGenerator[AgentEvent | Msg, None]:
+        """The reasoning-acting loop shared by fresh and resumed replies."""
         finished_reason = ReplyFinishedReason.COMPLETED
         for _ in range(self._max_iters):
             # ----- Reasoning: one model call, streamed as events -----
@@ -170,8 +204,15 @@ class Agent:
                 break
 
             # ----- Acting: execute tool calls, stream their results -----
+            parked = False
             async for event in self._acting(tool_calls):
+                if isinstance(event, RequireUserConfirmEvent):
+                    parked = True
                 yield event
+            if parked:
+                # The reply parks on user confirmation: the stream ends
+                # here and resumes with a UserConfirmResultEvent.
+                return
         else:
             # Every round ended with tool calls; stop instead of looping forever.
             finished_reason = ReplyFinishedReason.EXCEED_MAX_ITERS
@@ -184,6 +225,110 @@ class Agent:
             finished_reason=finished_reason,
         )
         yield reply_msg
+
+    async def _apply_confirm_results(
+        self,
+        event: UserConfirmResultEvent,
+    ) -> AsyncGenerator[AgentEvent, None]:
+        """Validate and apply a user confirmation event against the parked
+        tool calls; confirmed calls then execute exactly once."""
+        pending = self.state.get_awaiting_tool_calls(self.name)
+        pending_ids = {tc.id for tc in pending}
+        extra_ids = [
+            confirmation.tool_call.id
+            for confirmation in event.confirm_results
+            if confirmation.tool_call.id not in pending_ids
+        ]
+        if extra_ids:
+            raise ValueError(
+                f"Received UserConfirmResultEvent with tool call ids "
+                f"{extra_ids} that are not waiting for confirmation.",
+            )
+
+        confirmed_calls = []
+        for confirmation in event.confirm_results:
+            if confirmation.confirmed:
+                self._update_tool_call_state(
+                    confirmation.tool_call.id,
+                    ToolCallState.ALLOWED,
+                )
+                confirmed_calls.append(confirmation.tool_call)
+            else:
+                async for evt in self._error_tool_result(
+                    confirmation.tool_call,
+                    (
+                        "<system-reminder>The execution of tool "
+                        f'"{confirmation.tool_call.name}" is denied by user!'
+                        "</system-reminder>"
+                    ),
+                    ToolResultState.DENIED,
+                ):
+                    yield evt
+
+        # Confirmed calls run without re-checking permissions.
+        for tool_call in confirmed_calls:
+            async for evt in self._acting([tool_call], skip_permission=True):
+                yield evt
+
+    async def _handle_interrupt(
+        self,
+        event: UserInterruptEvent,
+    ) -> AsyncGenerator[AgentEvent | Msg, None]:
+        """Close every pending tool call with an interrupted result and end
+        the reply without entering the reasoning-acting loop."""
+        reply_msg = None
+        if self.state.context:
+            last_msg = self.state.context[-1]
+            if last_msg.role == "assistant" and last_msg.name == self.name:
+                reply_msg = last_msg
+            for tool_call in self.state.get_awaiting_tool_calls(self.name):
+                async for evt in self._error_tool_result(
+                    tool_call,
+                    (
+                        "<system-reminder>The tool call has been "
+                        "interrupted by the user.</system-reminder>"
+                    ),
+                    ToolResultState.INTERRUPTED,
+                ):
+                    yield evt
+
+        yield ReplyEndEvent(
+            reply_id=event.reply_id,
+            finished_reason=ReplyFinishedReason.INTERRUPTED,
+        )
+        if reply_msg is not None:
+            reply_msg.finished_at = _generate_timestamp()
+            reply_msg.finished_reason = ReplyFinishedReason.INTERRUPTED
+            yield reply_msg
+
+    async def _error_tool_result(
+        self,
+        tool_call: ToolCallBlock,
+        message: str,
+        state: ToolResultState,
+    ) -> AsyncGenerator[AgentEvent, None]:
+        """Record a failure result for a tool call without executing it."""
+        yield ToolResultStartEvent(
+            reply_id=self.state.reply_id,
+            tool_call_id=tool_call.id,
+            tool_call_name=tool_call.name,
+        )
+        self._save_to_context(
+            [
+                ToolResultBlock(
+                    id=tool_call.id,
+                    name=tool_call.name,
+                    output=message,
+                    state=state,
+                ),
+            ],
+        )
+        self._update_tool_call_state(tool_call.id, ToolCallState.FINISHED)
+        yield ToolResultEndEvent(
+            reply_id=self.state.reply_id,
+            tool_call_id=tool_call.id,
+            state=state,
+        )
 
     async def _convert_chat_response_to_event(
         self,
@@ -233,11 +378,49 @@ class Agent:
     async def _acting(
         self,
         tool_calls: list[ToolCallBlock],
+        skip_permission: bool = False,
     ) -> AsyncGenerator[AgentEvent, None]:
         """Execute the tool calls of the current round in request order,
-        save one ToolResultBlock per call into the context, and stream the
-        result lifecycle as events."""
+        saving one ToolResultBlock per call into the context and streaming
+        the result lifecycle as events.
+
+        With a permission engine, every call is checked first: ALLOW
+        executes, DENY records a denied result without executing, and ASK
+        parks the reply on a RequireUserConfirmEvent.
+        """
         for tool_call in tool_calls:
+            if not skip_permission and self.permission_engine is not None:
+                tool = (
+                    await self.toolkit.get_tool(tool_call.name)
+                    if self.toolkit is not None
+                    else None
+                )
+                if tool is not None:
+                    decision = await self.permission_engine.check_permission(
+                        tool,
+                        self._parse_tool_input(tool_call),
+                    )
+                    if decision.behavior == PermissionBehavior.DENY:
+                        async for evt in self._error_tool_result(
+                            tool_call,
+                            decision.message,
+                            ToolResultState.DENIED,
+                        ):
+                            yield evt
+                        continue
+                    if decision.behavior == PermissionBehavior.ASK:
+                        # **Note** the state update must happen before the
+                        # event is yielded, mirroring the reference agent.
+                        self._update_tool_call_state(
+                            tool_call.id,
+                            ToolCallState.ASKING,
+                        )
+                        yield RequireUserConfirmEvent(
+                            reply_id=self.state.reply_id,
+                            tool_calls=[tool_call],
+                        )
+                        return
+
             yield ToolResultStartEvent(
                 reply_id=self.state.reply_id,
                 tool_call_id=tool_call.id,
@@ -273,6 +456,15 @@ class Agent:
                         state=item.state,
                         metadata=item.metadata,
                     )
+
+    @staticmethod
+    def _parse_tool_input(tool_call: ToolCallBlock) -> dict:
+        """Best-effort parse of the tool call arguments for rule matching."""
+        try:
+            parsed = json.loads(tool_call.input)
+        except (json.JSONDecodeError, TypeError):
+            return {}
+        return parsed if isinstance(parsed, dict) else {}
 
     def _save_to_context(self, blocks: list, usage=None) -> None:
         msg_usage = None

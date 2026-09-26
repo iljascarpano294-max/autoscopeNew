@@ -11,6 +11,7 @@ from ..message import (
     Msg,
     TextBlock,
     ToolCallBlock,
+    ToolCallState,
     ToolResultBlock,
 )
 
@@ -50,3 +51,28 @@ class AgentState(BaseModel):
                     content=list(blocks),
                 ),
             )
+
+    def get_awaiting_tool_calls(self, name: str) -> list[ToolCallBlock]:
+        """Get the tail assistant message's tool calls still awaiting an
+        outside response — currently the ``ASKING`` user confirmation
+        state written by the agent's permission gate.
+
+        Args:
+            name (`str`):
+                Only messages authored by this agent name are inspected;
+                observed messages from other agents are ignored.
+
+        Returns:
+            `list[ToolCallBlock]`:
+                The awaiting tool call blocks, empty if none.
+        """
+        if not self.context:
+            return []
+        last_msg = self.context[-1]
+        if last_msg.role != "assistant" or last_msg.name != name:
+            return []
+        return [
+            tc
+            for tc in last_msg.get_content_blocks("tool_call")
+            if tc.state == ToolCallState.ASKING
+        ]
