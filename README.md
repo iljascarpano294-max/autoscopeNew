@@ -90,3 +90,9 @@
 运行 `python examples/rag_demo.py` 可看到一份文本文件从解析到引用的完整离线链路。调用链：`TextParser` 解析 UTF-8 文本为 `Document`（保留 source），`ApproxTokenChunker` 按近似 token 切块并记录 offset（空文档零切块）；`KnowledgeBase.add_document` 以 `document_id:seq` 为幂等键嵌入索引（重复导入不重复记录，`delete_document` 清除全部块）；`retrieve` 返回带 source 与 chunk_id 的 `RetrievedChunk`，零相关查询不伪造引用；`RAGMiddleware` 在 `on_model_call` 把命中片段作为 `rag_context` 消息插入到原用户消息之前（长度上限、原消息对象不变）。长期记忆：`LongTermMemoryMiddleware.save/recall` 按 user_id 隔离（跨会话可召回、跨用户不可见），后端可替换（本地关键词召回为切片，`Mem0LongTermMemoryMiddleware` 为可选适配器，缺配置给出可读错误）。
 
 与参考实现的差异：解析只支持纯文本（PDF/Office/图片解析器未迁入）；向量库为进程内实现（参考的 Qdrant/Milvus Lite/Elasticsearch 等适配器未迁入，维度不匹配明确拒绝）；真实 embedding 模型与 Mem0/ReMe 服务接入留待对应阶段。测试为 `tests/test_rag_document.py`、`tests/test_rag_retrieval.py`、`tests/test_rag_middleware.py`、`tests/test_longterm_memory.py`。
+
+## 阶段 14：远程沙箱
+
+运行 `python examples/sandbox_demo.py`（默认本地模式，无需服务；`--docker` 走容器后端）。调用链：`SandboxedWorkspace(backend)` 保持阶段 8 的文件/命令语义，`SandboxBackendBase` 负责 `create/execute/write_file/read_file/close`；创建失败尽力释放资源且后续文件操作被拒；命令超时由后端终止进程并返回 `timed_out` 的结构化结果；`close` 幂等。`DockerBackend`（docker CLI：run/exec/cat/rm，默认 256m/0.5CPU/无网络）与 `E2BBackend`（注入 sandbox_factory 即可离线 Mock；缺 e2b 包或 E2B_API_KEY 给出可读错误）共享同一契约，阶段 8 的工具用例在两种后端行为一致。
+
+与参考实现的差异：参考含 Docker/E2B/Daytona/K8s/AppleContainer 等全集与 mcp 网关，本章按计划实现 Docker + E2B 两个后端样板（Daytona/K8s 按相同契约逐个迁入）；Docker 集成测试显式标记并在无 daemon 时跳过；阿里云部署（容器运行时、资源清单、清理策略）仅做规划记录，另行验收。测试为 `tests/test_sandbox_contract.py`、`tests/test_workspace_docker.py`、`tests/test_workspace_e2b.py`、`tests/test_sandbox_demo.py`。
