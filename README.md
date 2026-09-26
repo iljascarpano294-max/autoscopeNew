@@ -102,3 +102,9 @@
 运行 `python examples/realtime_demo.py`（离线）；两进程 A2A 用 `python examples/a2a_server.py --port 8765` + `python examples/a2a_client.py --port 8765`（仅本机回环）。调用链：`A2AAgent(endpoint, timeout, transport)` 把本地消息映射为 A2A 请求（message_id/task_id 关联），重复 message_id 重放缓存应答不重触发远端，超时产生带 ErrorInfo 的失败 ReplyEndEvent 终止流；`RealtimeModelBase`/`RealtimeTransportBase` 定义音频进出契约，`InMemoryRealtimeTransport` 按序投递，`RealtimeAggregator` 按 seq 组装转写与音频（乱序抛错、打断清空待播并丢弃旧回合迟到事件）；`RealtimeAgent.start/send_audio/interrupt/close` 驱动整条语音链路（close 幂等）。
 
 与参考实现的差异：A2A 采用简化 JSON 协议与可注入 transport（参考为 A2A SDK 全协议）；实时模型为 Fake（OpenAI/Gemini/DashScope 实时适配器与 WebSocket 传输需真实凭据，后续逐个对齐）；两进程端到端仅绑定本机回环。测试为 `tests/test_a2a_agent.py`、`tests/test_a2a_e2e.py`、`tests/test_realtime_aggregator.py`、`tests/test_realtime_agent.py`。
+
+## 阶段 16：可观测性与整体对齐
+
+调用链：`setup_tracing(exporter)` 配置全局 Tracer（默认 NullExporter，无配置零开销）；`TracingMiddleware` 在 on_reply/on_model_call/on_acting 生成 `agent.reply` → `model.call`/`tool.call` 父子 span（contextvar+token 恢复保证兄弟稳定），异常路径 span 闭合并标记错误；属性经 `safe_attributes` 白名单过滤，工具输入与密钥不进入 trace；`build_log_record` 输出带 run_id/session_id/event_type 的结构化日志并按 secrets 清单脱敏；`Metrics` 统计模型/工具调用量、失败数与时延。`DeepSeekChatModel` 继承 OpenAI 兼容适配器（MockTransport 离线验证文本/工具/usage/错误）。`docs/compatibility-matrix.md` 按模块列出公开接口对齐状态（75 已对齐 / 11 部分 / 暂缓清单），`scripts/check_public_api.py` 审计 import 可见名称，`tests/test_public_api.py` 把矩阵变成可执行测试。
+
+与参考实现的差异：追踪为内置轻量实现（参考为 OpenTelemetry 全套 setup/attributes，导出器接口对齐可后续替换）；DeepSeek 之外的模型适配器、A2A SDK 全协议、真实语音模型、Daytona/K8s 沙箱等继续列在暂缓清单，不宣称完全等价。测试为 `tests/test_tracing.py`、`tests/test_observability_redaction.py`、`tests/test_model_adapters.py`、`tests/test_public_api.py`。
