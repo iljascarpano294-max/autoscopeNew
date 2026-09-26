@@ -14,6 +14,31 @@
 - 阶段 2 已在 `codex/stage-2-model-abstraction` 分支完成模型抽象、Fake 模型和一个适配器。
 - 阶段 3 已在 `codex/stage-3-minimal-agent` 分支完成非流式多轮文本 Agent。下一步是阶段 4：工具闭环。每阶段的详细实施任务见 `docs/superpowers/plans/`。
 
+## 逐章实施计划
+
+阶段 0–3 是已完成工作的中文记录，勾选项表示已经验证；阶段 4–16 是待执行计划。后续实施从规划分支 `codex/stage-plans-zh` 创建阶段 4 分支，再逐章继承，每章只完成该章范围。
+
+| 阶段 | 计划 |
+| --- | --- |
+| 0 | [固定基线与骨架](docs/superpowers/plans/2026-09-26-stage-0-baseline-skeleton.md) |
+| 1 | [消息与响应](docs/superpowers/plans/2026-09-26-stage-1-message-response.md) |
+| 2 | [模型抽象](docs/superpowers/plans/2026-09-26-stage-2-model-abstraction.md) |
+| 3 | [最小 Agent](docs/superpowers/plans/2026-09-26-stage-3-minimal-agent.md) |
+| 4 | [工具调用闭环](docs/superpowers/plans/2026-09-26-stage-4-tool-loop.md) |
+| 5 | [事件与流式输出](docs/superpowers/plans/2026-09-26-stage-5-events-streaming.md) |
+| 6 | [状态、权限与中断](docs/superpowers/plans/2026-09-26-stage-6-state-permission-interrupt.md) |
+| 7 | [中间件与上下文](docs/superpowers/plans/2026-09-26-stage-7-middleware-context.md) |
+| 8 | [工作空间、MCP 与 Skill](docs/superpowers/plans/2026-09-26-stage-8-workspace-mcp-skills.md) |
+| 9 | [多 Agent 编排](docs/superpowers/plans/2026-09-26-stage-9-multi-agent-orchestration.md) |
+| 10 | [应用服务与会话](docs/superpowers/plans/2026-09-26-stage-10-app-session-api.md) |
+| 11 | [持久化与分布式存储](docs/superpowers/plans/2026-09-26-stage-11-storage-message-bus.md) |
+| 12 | [频道接入与 Web UI](docs/superpowers/plans/2026-09-26-stage-12-channels-web-ui.md) |
+| 13 | [RAG 与长期记忆](docs/superpowers/plans/2026-09-26-stage-13-rag-longterm-memory.md) |
+| 14 | [远程沙箱](docs/superpowers/plans/2026-09-26-stage-14-remote-sandbox.md) |
+| 15 | [A2A 与实时语音](docs/superpowers/plans/2026-09-26-stage-15-a2a-realtime-voice.md) |
+| 16 | [可观测性与整体对齐](docs/superpowers/plans/2026-09-26-stage-16-observability-alignment.md) |
+
+
 ## 总原则
 
 1. **先跑通，再扩展。** 第一条主线是“用户消息 → 模型 → Agent 回复”，第二条是“模型要求调用工具 → 执行 → 回填 → 回复”。
