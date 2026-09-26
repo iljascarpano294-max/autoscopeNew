@@ -1,13 +1,14 @@
-"""Shared non-streaming chat model call wrapper for stage 2."""
+"""Shared chat model call wrapper for stages 2-5."""
 
 import asyncio
 from abc import ABC, abstractmethod
-from typing import Any
+from typing import Any, AsyncGenerator
 
 from pydantic import BaseModel
 
 from ..message import Msg
 from ._model_response import ChatResponse, FinishedReason
+from ._utils import _StreamAccumulator
 
 
 class ChatModelBase(ABC):
@@ -46,14 +47,15 @@ class ChatModelBase(ABC):
         tools: list[dict] | None = None,
         tool_choice: str | None = None,
         **kwargs: Any,
-    ) -> ChatResponse:
-        if self.stream:
-            raise NotImplementedError("Streaming model calls arrive in stage 5.")
+    ) -> ChatResponse | AsyncGenerator[ChatResponse, None]:
+        """Call the model. Streaming subclasses return an async generator of
+        ChatResponse chunks; non-streaming subclasses return one response."""
         for attempt in range(self.max_retries + 1):
             try:
-                return await self._call_api(
+                res = await self._call_api(
                     self.model, messages=messages, tools=tools, tool_choice=tool_choice, **kwargs
                 )
+                break
             except asyncio.CancelledError:
                 return ChatResponse(
                     content=[], is_last=True, finished_reason=FinishedReason.INTERRUPTED
@@ -62,7 +64,41 @@ class ChatModelBase(ABC):
                 if not isinstance(error, self._get_retryable_exceptions()) or attempt == self.max_retries:
                     raise
                 await asyncio.sleep(self.retry_delay)
-        raise AssertionError("Unreachable retry state")
+
+        if isinstance(res, ChatResponse):
+            return res
+
+        async def _stream() -> AsyncGenerator[ChatResponse, None]:
+            # Wrap the provider stream: pass deltas through, absorb empty
+            # "carrier" chunks that only propagate metadata, and fall back
+            # to the accumulated response when the provider never sends a
+            # closing chunk (mirrors the reference __call__ streaming
+            # branch).
+            yield_acc_res = True
+            acc_res = _StreamAccumulator()
+            try:
+                async for chunk in res:
+                    if not chunk.is_last:
+                        acc_res.append_chat_response(chunk)
+                        acc_res.id = chunk.id
+                        # Empty-content deltas are "carrier" chunks used by
+                        # subclasses to propagate usage / id metadata. We
+                        # absorb their metadata but do not surface them to
+                        # the consumer, which keeps the visible stream free
+                        # of spurious empty deltas.
+                        if not chunk.content:
+                            continue
+                    else:
+                        yield_acc_res = False
+                    yield chunk
+            except asyncio.CancelledError:
+                acc_res.finished_reason = FinishedReason.INTERRUPTED
+                yield_acc_res = True
+
+            if yield_acc_res:
+                yield acc_res.build()
+
+        return _stream()
 
     @abstractmethod
     async def _call_api(
@@ -72,5 +108,5 @@ class ChatModelBase(ABC):
         tools: list[dict] | None = None,
         tool_choice: str | None = None,
         **kwargs: Any,
-    ) -> ChatResponse:
-        """Return one complete response from the provider."""
+    ) -> ChatResponse | AsyncGenerator[ChatResponse, None]:
+        """Return one complete response, or a stream of chunks, from the provider."""
