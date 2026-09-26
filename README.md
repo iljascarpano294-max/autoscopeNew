@@ -1,6 +1,6 @@
 # AgentScope 渐进式重建
 
-这是一个用于学习的 AgentScope 2.0 重建项目。参考仓库与固定提交见 [BASELINE.md](BASELINE.md)，阶段路线见 [PLAN.md](PLAN.md)。阶段 3 已建立可进行多轮文本对话的最小 Agent；版本标记仍为 `0.0.0`，表示尚未完成参考项目的功能。
+这是一个用于学习的 AgentScope 2.0 重建项目。参考仓库与固定提交见 [BASELINE.md](BASELINE.md)，阶段路线见 [PLAN.md](PLAN.md)。阶段 4 已打通"模型请求工具 → 执行 → 结果回填 → 最终回复"的离线闭环；版本标记仍为 `0.0.0`，表示尚未完成参考项目的功能。
 
 ## 运行阶段 0
 
@@ -31,4 +31,8 @@
 
 运行 `python examples/agent_demo.py` 可看到两轮离线对话。每次 `reply` 把新输入加入 `AgentState.context`，临时构造系统消息并附上历史，再调用模型；返回的 `ChatResponse` 转成 `AssistantMsg` 保存到上下文。系统消息不存入对话历史。
 
-此阶段收到工具调用会明确报错，工具执行留给阶段 4。事件流、中断、权限、中间件和上下文压缩也未接入；相关测试只验证当前非流式文本闭环。
+## 阶段 4：工具调用闭环
+
+运行 `python examples/tool_demo.py` 可看到一次离线工具调用。调用链：`Agent.reply` 每轮先 `_reasoning`（把 `Toolkit.get_tool_schemas()` 的 schema 交给模型），模型返回 `ToolCallBlock` 后 `_acting` 调 `Toolkit.call_tool`：按 `input_schema` 用 json_repair 修复并显式 jsonschema 校验参数（未知工具、非法 JSON、缺必填参数、工具异常都变成带 `ToolResultState.ERROR` 的结果，不中断会话），执行工具并把流式 `ToolChunk` 累积成 `ToolResponse`；Agent 把它转成 `ToolResultBlock`，与工具调用块一起按 `reply_id` 并入同一条助手消息，再带着结果调模型，直到模型给出纯文本或达到 `max_iters`（`finished_reason="exceed_max_iters"`）。
+
+与参考实现（提交 `5ff52f8`）的差异：Toolkit 只保留 basic 组的注册、schema 导出与调度，工具组/MCP/skill/内建工具留待阶段 8；`ToolBase` 裁剪了 permission 相关方法与危险路径检查（阶段 6）；`call_tool` 在 json_repair 之外增加显式 jsonschema 校验。测试为 `tests/test_tool.py`、`tests/test_toolkit.py`、`tests/test_agent_tool_loop.py`、`tests/test_tool_demo.py`，全量 `pytest -q tests` 47 项通过。
