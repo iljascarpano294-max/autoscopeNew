@@ -1,5 +1,7 @@
 # -*- coding: utf-8 -*-
 """TracingMiddleware: one span per reply, model call and tool call."""
+import time
+
 from .._base import MiddlewareBase
 from ._attributes import safe_attributes
 from ._setup import get_tracer
@@ -12,7 +14,8 @@ class TracingMiddleware(MiddlewareBase):
     hang off the currently open span, so one request keeps a stable
     parent-child chain. Only whitelisted attributes are recorded — tool
     inputs and credentials never reach a span. Every span is closed even
-    when the wrapped call raises, with the error attached.
+    when the wrapped call raises, with the error attached, and the
+    tracer's metrics count calls, latency and failures.
     """
 
     async def on_reply(self, agent, input_kwargs, next_handler):
@@ -38,11 +41,20 @@ class TracingMiddleware(MiddlewareBase):
                 model=getattr(current_model, "model", "unknown"),
             ),
         )
+        started = time.monotonic()
         try:
             result = await next_handler(**input_kwargs)
         except Exception as error:
+            tracer.metrics.record_model_call(
+                (time.monotonic() - started) * 1000,
+                failed=True,
+            )
             tracer.end_span(span, error=f"{type(error).__name__}: {error}")
             raise
+        tracer.metrics.record_model_call(
+            (time.monotonic() - started) * 1000,
+            failed=False,
+        )
         tracer.end_span(span)
         return result
 
@@ -58,6 +70,8 @@ class TracingMiddleware(MiddlewareBase):
             async for item in next_handler(**input_kwargs):
                 yield item
         except Exception as error:
+            tracer.metrics.record_tool_call(failed=True)
             tracer.end_span(span, error=f"{type(error).__name__}: {error}")
             raise
+        tracer.metrics.record_tool_call(failed=False)
         tracer.end_span(span)

@@ -37,6 +37,31 @@ class NullExporter:
         return None
 
 
+class Metrics:
+    """Counters for model/tool calls, failures and latency."""
+
+    def __init__(self) -> None:
+        self.reset()
+
+    def reset(self) -> None:
+        self.model_calls = 0
+        self.model_failures = 0
+        self.total_model_latency_ms = 0.0
+        self.tool_calls = 0
+        self.tool_failures = 0
+
+    def record_model_call(self, duration_ms: float, failed: bool) -> None:
+        self.model_calls += 1
+        self.total_model_latency_ms += duration_ms
+        if failed:
+            self.model_failures += 1
+
+    def record_tool_call(self, failed: bool) -> None:
+        self.tool_calls += 1
+        if failed:
+            self.tool_failures += 1
+
+
 class Tracer:
     """Create nested spans; the current span is task-local context.
 
@@ -46,6 +71,7 @@ class Tracer:
 
     def __init__(self, exporter: Any = None) -> None:
         self.exporter = exporter or NullExporter()
+        self.metrics = Metrics()
         self._current: contextvars.ContextVar[Span | None] = contextvars.ContextVar(
             f"span-{id(self)}",
             default=None,
@@ -98,3 +124,8 @@ def get_tracer() -> Tracer:
     if _tracer is None:
         _tracer = Tracer(NullExporter())
     return _tracer
+
+
+def get_metrics() -> Metrics:
+    """The global tracer's metrics counters."""
+    return get_tracer().metrics

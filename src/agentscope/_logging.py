@@ -45,3 +45,41 @@ def setup_logger(
 
 
 setup_logger("INFO")
+
+
+def build_log_record(
+    run_id: str | None = None,
+    session_id: str | None = None,
+    event_type: str | None = None,
+    fields: dict | None = None,
+    secrets: list[str] | None = None,
+) -> dict:
+    """Build one structured, redacted log record.
+
+    Correlation ids (run_id/session_id) and the event type always come
+    through; every string value in ``fields`` is scrubbed of the given
+    secret values, and credential-like keys are replaced wholesale.
+    """
+    from ._utils._common import _generate_id
+
+    safe_fields: dict = {}
+    for key, value in (fields or {}).items():
+        lowered = key.lower()
+        if any(marker in lowered for marker in ("api_key", "apikey", "password", "secret", "token", "credential")):
+            safe_fields[key] = "[REDACTED]"
+        elif isinstance(value, str) and secrets:
+            redacted = value
+            for secret in secrets:
+                if secret:
+                    redacted = redacted.replace(secret, "[REDACTED]")
+            safe_fields[key] = redacted
+        else:
+            safe_fields[key] = value
+
+    return {
+        "log_id": _generate_id(),
+        "run_id": run_id,
+        "session_id": session_id,
+        "event_type": event_type,
+        "fields": safe_fields,
+    }
