@@ -1,5 +1,6 @@
-"""Public Agent API available in stage 3."""
+"""Public Agent API."""
 
+from ._a2a_agent import A2AAgent
 from ._agent import Agent
 
-__all__ = ["Agent"]
+__all__ = ["A2AAgent", "Agent"]
