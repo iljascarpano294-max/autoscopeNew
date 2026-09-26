@@ -14,6 +14,7 @@ dependencies = [
     "jsonschema",
     "docstring-parser",
     "json-repair",
+    "mcp",
 ]
 
 [tool.setuptools.packages.find]

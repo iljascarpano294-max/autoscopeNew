@@ -48,6 +48,7 @@ class Toolkit:
         self._registered_tools: OrderedDict[str, RegisteredTool] = (
             OrderedDict()
         )
+        self._mcp_clients: list = []
         for tool in tools or []:
             self._register(tool)
 
@@ -252,6 +253,20 @@ class Toolkit:
         new_tools = tool if isinstance(tool, list) else [tool]
         for new_tool in new_tools:
             self._register(new_tool)
+
+    async def add_mcp(self, client) -> None:
+        """Connect to an MCP client and register its tools.
+
+        Args:
+            client (`MCPClient`):
+                The MCP client to connect to; it is stored so its tools
+                stay reachable for the lifetime of the toolkit.
+        """
+        if not client.is_connected:
+            await client.connect()
+        self._mcp_clients.append(client)
+        for mcp_tool in await client.list_tools():
+            self._register(mcp_tool)
 
     async def remove_tool(self, tool_name: str | list[str]) -> None:
         """Remove tool from the toolkit on-the-fly.
