@@ -66,3 +66,9 @@
 运行 `python examples/team_demo.py` 可看到两个 Agent 按目标协作与一次可追踪的成员失败。调用链：`PipelineProtocol` 是结构化协议（`reply_stream` 返回事件流），`Agent` 天然满足；`SOPEngine(sop, state)` 按 SOP 步骤顺序驱动各成员——第一步拿运行输入，后续步骤拿上一提交的 `<handover>` 文本块（重试附带上次拒绝反馈）；成员在工具确认处停靠时状态记 AWAITING 并结束流，恢复事件只路由到停靠步骤；验证器注入（SOPStep 的 verify 回调）出具判定，`max_attempts` 耗尽置 FAILED 且后续步骤不执行；`GoalPipeline` 把目标交给首个成员、依次交接结果，成员异常转为 MEMBER_FAILED 事件。所有步骤状态在 `SOPRunState` 中可 JSON 往返。
 
 与参考实现的差异：SOP 状态机与引擎逐字迁入；参考 `SOPStep` 内建的模型自验证（brief/question 提示）简化为注入的 verify 回调（真实验证模型随阶段 10 服务层接入）；步骤边界事件（CustomEvent SOP_STEP_STARTED/ENDED）暂未发；动态团队工具随阶段 10/11 的服务与存储接入。测试为 `tests/test_pipeline_protocol.py`、`tests/test_sop_state.py`、`tests/test_sop_engine.py`、`tests/test_goal_pipeline.py`。
+
+## 阶段 10：应用服务与会话
+
+运行 `python examples/app_demo.py` 可在本地经 ASGI 完成一轮会话并验证重启后会话消失。调用链：`create_app(agent_factory)` 组装 `SessionService`（进程内字典，agent_factory 每会话构建一个 Agent 实例）与 `ChatService`（每会话一把 asyncio.Lock，同会话并发请求按获取顺序串行、不同会话独立，委托既有 `Agent.reply`）；HTTP 层 POST/GET/DELETE `/sessions`、POST `/sessions/{id}/messages`，Pydantic schema 校验输入（空消息 422），`SessionNotFound` 统一映射 404，模型异常映射为不含堆栈与内部信息的 500 且不残留伪助手消息；lifespan 关闭时清空会话。
+
+与参考实现的差异：参考 app 层是大规模模块（服务/路由/频道/存储/任务），本章按计划只取进程内会话 + HTTP 三条路由的最小切片；非流式回复（reply_stream 事件经 SSE 的流式 API 随频道阶段接入）；持久化留到阶段 11。测试为 `tests/test_session_service.py`、`tests/test_chat_service.py`、`tests/test_app_api.py`、`tests/test_app_demo.py`。

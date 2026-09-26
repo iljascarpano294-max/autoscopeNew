@@ -15,6 +15,7 @@ dependencies = [
     "docstring-parser",
     "json-repair",
     "mcp",
+    "fastapi",
 ]
 
 [tool.setuptools.packages.find]
