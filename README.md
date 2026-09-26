@@ -96,3 +96,9 @@
 运行 `python examples/sandbox_demo.py`（默认本地模式，无需服务；`--docker` 走容器后端）。调用链：`SandboxedWorkspace(backend)` 保持阶段 8 的文件/命令语义，`SandboxBackendBase` 负责 `create/execute/write_file/read_file/close`；创建失败尽力释放资源且后续文件操作被拒；命令超时由后端终止进程并返回 `timed_out` 的结构化结果；`close` 幂等。`DockerBackend`（docker CLI：run/exec/cat/rm，默认 256m/0.5CPU/无网络）与 `E2BBackend`（注入 sandbox_factory 即可离线 Mock；缺 e2b 包或 E2B_API_KEY 给出可读错误）共享同一契约，阶段 8 的工具用例在两种后端行为一致。
 
 与参考实现的差异：参考含 Docker/E2B/Daytona/K8s/AppleContainer 等全集与 mcp 网关，本章按计划实现 Docker + E2B 两个后端样板（Daytona/K8s 按相同契约逐个迁入）；Docker 集成测试显式标记并在无 daemon 时跳过；阿里云部署（容器运行时、资源清单、清理策略）仅做规划记录，另行验收。测试为 `tests/test_sandbox_contract.py`、`tests/test_workspace_docker.py`、`tests/test_workspace_e2b.py`、`tests/test_sandbox_demo.py`。
+
+## 阶段 15：A2A 与实时语音
+
+运行 `python examples/realtime_demo.py`（离线）；两进程 A2A 用 `python examples/a2a_server.py --port 8765` + `python examples/a2a_client.py --port 8765`（仅本机回环）。调用链：`A2AAgent(endpoint, timeout, transport)` 把本地消息映射为 A2A 请求（message_id/task_id 关联），重复 message_id 重放缓存应答不重触发远端，超时产生带 ErrorInfo 的失败 ReplyEndEvent 终止流；`RealtimeModelBase`/`RealtimeTransportBase` 定义音频进出契约，`InMemoryRealtimeTransport` 按序投递，`RealtimeAggregator` 按 seq 组装转写与音频（乱序抛错、打断清空待播并丢弃旧回合迟到事件）；`RealtimeAgent.start/send_audio/interrupt/close` 驱动整条语音链路（close 幂等）。
+
+与参考实现的差异：A2A 采用简化 JSON 协议与可注入 transport（参考为 A2A SDK 全协议）；实时模型为 Fake（OpenAI/Gemini/DashScope 实时适配器与 WebSocket 传输需真实凭据，后续逐个对齐）；两进程端到端仅绑定本机回环。测试为 `tests/test_a2a_agent.py`、`tests/test_a2a_e2e.py`、`tests/test_realtime_aggregator.py`、`tests/test_realtime_agent.py`。
