@@ -1,6 +1,6 @@
-"""Conversation state for the minimal Agent (stages 3-4)."""
+"""Conversation state for the minimal Agent (stages 3-6)."""
 
-from typing import Sequence
+from typing import Any, Sequence
 
 from pydantic import BaseModel, Field
 
@@ -21,6 +21,10 @@ class AgentState(BaseModel):
     reply_id: str = Field(default_factory=_generate_id)
     """Identity of the reply in progress; assistant blocks produced by one
     reply are merged into the message carrying this id."""
+    middle_context: dict[str, Any] = Field(default_factory=dict)
+    """Scratch space for middlewares, keyed by their middleware key (e.g.
+    per-reply budget counters), so middleware state persists across
+    confirmation/interruption round trips without global variables."""
 
     def append_context(
         self,
