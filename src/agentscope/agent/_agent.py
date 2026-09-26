@@ -1,4 +1,4 @@
-"""Minimal Agent: stages 4-6 tool loop, event streaming, permissions."""
+"""Minimal Agent: stages 4-7 tool loop, streaming, permissions, middleware."""
 
 import inspect
 import json
@@ -34,7 +34,8 @@ from ..message import (
     ToolResultState,
     Usage,
 )
-from ..model import ChatModelBase
+from ..middleware import MiddlewareBase
+from ..model import ChatModelBase, ChatResponse
 from ..permission import PermissionBehavior, PermissionEngine
 from ..state import AgentState
 from ..tool import ToolResponse, Toolkit
@@ -51,6 +52,7 @@ class Agent:
         toolkit: Toolkit | None = None,
         max_iters: int = 10,
         permission_engine: PermissionEngine | None = None,
+        middlewares: list[MiddlewareBase] | None = None,
     ) -> None:
         self.name = name
         self._system_prompt = system_prompt
@@ -58,10 +60,99 @@ class Agent:
         self.state = state if state is not None else AgentState()
         self.toolkit = toolkit
         self.permission_engine = permission_engine
+        self._middlewares: list[MiddlewareBase] = middlewares or []
         if max_iters < 1:
             raise ValueError("max_iters must be at least 1.")
         self._max_iters = max_iters
 
+    # ==================================================================
+    # Middleware plumbing
+    # ==================================================================
+    def _implemented_middlewares(self, hook_name: str) -> list[MiddlewareBase]:
+        return [
+            middleware
+            for middleware in self._middlewares
+            if middleware.is_implemented(hook_name)
+        ]
+
+    def _run_onion(
+        self,
+        hook_name: str,
+        input_kwargs: dict,
+        terminal: Any,
+    ) -> AsyncGenerator:
+        """Run an async-generator hook (on_reply/on_reasoning/on_acting) as
+        an onion: first registered middleware is outermost. Each layer's
+        next_handler may be consumed at most once."""
+        middlewares = self._implemented_middlewares(hook_name)
+
+        async def execute_chain(index: int = 0, **kwargs: Any) -> AsyncGenerator:
+            if index >= len(middlewares):
+                async for item in terminal(**kwargs):
+                    yield item
+            else:
+                middleware = middlewares[index]
+                consumed = False
+
+                async def next_handler(**kw: Any) -> AsyncGenerator:
+                    nonlocal consumed
+                    if consumed:
+                        raise RuntimeError(
+                            f"The next_handler of '{hook_name}' in "
+                            f"{type(middleware).__name__} can only be "
+                            f"consumed once.",
+                        )
+                    consumed = True
+                    async for item in execute_chain(index + 1, **kw):
+                        yield item
+
+                async for item in getattr(middleware, hook_name)(
+                    agent=self,
+                    input_kwargs=dict(kwargs),
+                    next_handler=next_handler,
+                ):
+                    yield item
+
+        return execute_chain(**input_kwargs)
+
+    async def _run_awaitable_onion(
+        self,
+        hook_name: str,
+        input_kwargs: dict,
+        terminal: Any,
+    ) -> Any:
+        """Run an awaitable hook (on_model_call/on_check_permission) as an
+        onion with the same ordering and single-consumption guarantees."""
+        middlewares = self._implemented_middlewares(hook_name)
+
+        async def execute_chain(index: int = 0, **kwargs: Any) -> Any:
+            if index >= len(middlewares):
+                return await terminal(**kwargs)
+            middleware = middlewares[index]
+            consumed = False
+
+            async def next_handler(**kw: Any) -> Any:
+                nonlocal consumed
+                if consumed:
+                    raise RuntimeError(
+                        f"The next_handler of '{hook_name}' in "
+                        f"{type(middleware).__name__} can only be "
+                        f"consumed once.",
+                    )
+                consumed = True
+                return await execute_chain(index + 1, **kw)
+
+            return await getattr(middleware, hook_name)(
+                agent=self,
+                input_kwargs=dict(kwargs),
+                next_handler=next_handler,
+            )
+
+        return await execute_chain(**input_kwargs)
+
+    # ==================================================================
+    # Public entries
+    # ==================================================================
     async def observe(self, msgs: Msg | list[Msg] | None = None) -> None:
         if msgs is None:
             return
@@ -90,6 +181,21 @@ class Agent:
         finish with exactly one final Msg. A parked (ASK) confirmation ends
         the stream on RequireUserConfirmEvent; pass a UserConfirmResultEvent
         to resume, or a UserInterruptEvent to abort it."""
+        async for item in self._run_onion(
+            "on_reply",
+            {"inputs": inputs},
+            self._reply_impl,
+        ):
+            yield item
+
+    async def _reply_impl(
+        self,
+        inputs: Msg
+        | list[Msg]
+        | UserConfirmResultEvent
+        | UserInterruptEvent
+        | None = None,
+    ) -> AsyncGenerator[AgentEvent | Msg, None]:
         if isinstance(inputs, UserInterruptEvent):
             async for item in self._handle_interrupt(inputs):
                 yield item
@@ -116,76 +222,30 @@ class Agent:
         async for item in self._reasoning_acting_loop():
             yield item
 
+    # ==================================================================
+    # Reasoning-acting loop
+    # ==================================================================
     async def _reasoning_acting_loop(self) -> AsyncGenerator[AgentEvent | Msg, None]:
         """The reasoning-acting loop shared by fresh and resumed replies."""
         finished_reason = ReplyFinishedReason.COMPLETED
         for _ in range(self._max_iters):
             # ----- Reasoning: one model call, streamed as events -----
-            yield ModelCallStartEvent(
-                reply_id=self.state.reply_id,
-                model_name=self.model.model,
-            )
-            messages = [
-                SystemMsg(name="system", content=self._system_prompt),
-                *self.state.context,
-            ]
-            tools = (
-                await self.toolkit.get_tool_schemas()
-                if self.toolkit is not None
-                else None
-            )
-            res = await self.model(messages, tools=tools)
-
-            block_ids: dict = {"text": None, "tools": []}
             completed_response = None
-            if inspect.isasyncgen(res):
-                async for chunk in res:
-                    if chunk.is_last:
-                        completed_response = chunk
-                    else:
-                        async for event in self._convert_chat_response_to_event(
-                            block_ids,
-                            chunk,
-                        ):
-                            yield event
-            else:
-                completed_response = res
-                async for event in self._convert_chat_response_to_event(
-                    block_ids,
-                    res,
-                ):
+            async for event in self._run_onion(
+                "on_reasoning",
+                {"tool_choice": None},
+                self._reasoning_impl,
+            ):
+                if isinstance(event, ChatResponse):
+                    completed_response = event
+                else:
                     yield event
-
-            # Close the streams that are still open.
-            if block_ids["text"] is not None:
-                yield TextBlockEndEvent(
-                    reply_id=self.state.reply_id,
-                    block_id=block_ids["text"],
-                )
-                block_ids["text"] = None
-            for tool_call_id in list(block_ids["tools"]):
-                yield ToolCallEndEvent(
-                    reply_id=self.state.reply_id,
-                    tool_call_id=tool_call_id,
-                )
-            block_ids["tools"] = []
 
             if completed_response is None:
                 raise RuntimeError(
                     "Model returned an empty streaming response: no "
                     "is_last=True chunk was received.",
                 )
-            usage = completed_response.usage
-            yield ModelCallEndEvent(
-                reply_id=self.state.reply_id,
-                input_tokens=getattr(usage, "input_tokens", 0) or 0,
-                output_tokens=getattr(usage, "output_tokens", 0) or 0,
-                cache_input_tokens=getattr(usage, "cache_input_tokens", 0) or 0,
-                cache_creation_input_tokens=(
-                    getattr(usage, "cache_creation_input_tokens", 0) or 0
-                ),
-                finished_reason=completed_response.finished_reason,
-            )
 
             tool_calls = [
                 block
@@ -226,6 +286,110 @@ class Agent:
         )
         yield reply_msg
 
+    async def _reasoning_impl(
+        self,
+        tool_choice: Any = None,
+    ) -> AsyncGenerator[AgentEvent | ChatResponse, None]:
+        """One model call wrapped as events; yields the completed response
+        as the final item so the loop can persist it."""
+        yield ModelCallStartEvent(
+            reply_id=self.state.reply_id,
+            model_name=self.model.model,
+        )
+        messages = [
+            SystemMsg(name="system", content=await self._get_system_prompt()),
+            *self.state.context,
+        ]
+        tools = (
+            await self.toolkit.get_tool_schemas() if self.toolkit is not None else None
+        )
+        res = await self._run_awaitable_onion(
+            "on_model_call",
+            {
+                "messages": messages,
+                "tools": tools,
+                "tool_choice": tool_choice,
+                "current_model": self.model,
+            },
+            self._call_model,
+        )
+
+        block_ids: dict = {"text": None, "tools": []}
+        completed_response = None
+        if inspect.isasyncgen(res):
+            async for chunk in res:
+                if chunk.is_last:
+                    completed_response = chunk
+                else:
+                    async for event in self._convert_chat_response_to_event(
+                        block_ids,
+                        chunk,
+                    ):
+                        yield event
+        else:
+            completed_response = res
+            async for event in self._convert_chat_response_to_event(
+                block_ids,
+                res,
+            ):
+                yield event
+
+        # Close the streams that are still open.
+        if block_ids["text"] is not None:
+            yield TextBlockEndEvent(
+                reply_id=self.state.reply_id,
+                block_id=block_ids["text"],
+            )
+            block_ids["text"] = None
+        for tool_call_id in list(block_ids["tools"]):
+            yield ToolCallEndEvent(
+                reply_id=self.state.reply_id,
+                tool_call_id=tool_call_id,
+            )
+        block_ids["tools"] = []
+
+        if completed_response is None:
+            raise RuntimeError(
+                "Model returned an empty streaming response: no "
+                "is_last=True chunk was received.",
+            )
+        usage = completed_response.usage
+        yield ModelCallEndEvent(
+            reply_id=self.state.reply_id,
+            input_tokens=getattr(usage, "input_tokens", 0) or 0,
+            output_tokens=getattr(usage, "output_tokens", 0) or 0,
+            cache_input_tokens=getattr(usage, "cache_input_tokens", 0) or 0,
+            cache_creation_input_tokens=(
+                getattr(usage, "cache_creation_input_tokens", 0) or 0
+            ),
+            finished_reason=completed_response.finished_reason,
+        )
+        yield completed_response
+
+    async def _call_model(
+        self,
+        messages: list[Msg],
+        tools: list[dict] | None = None,
+        tool_choice: Any = None,
+        current_model: ChatModelBase | None = None,
+    ) -> ChatResponse | AsyncGenerator[ChatResponse, None]:
+        model = current_model if current_model is not None else self.model
+        return await model(messages, tools=tools, tool_choice=tool_choice)
+
+    async def _get_system_prompt(self) -> str:
+        """The system prompt, transformed sequentially by the middlewares
+        that implement on_system_prompt."""
+        prompt = self._system_prompt
+        for middleware in self._implemented_middlewares("on_system_prompt"):
+            prompt = await middleware.on_system_prompt(
+                agent=self,
+                current_prompt=prompt,
+            )
+        return prompt
+
+    # ==================================================================
+    # Confirmation and interruption
+    # ==================================================================
     async def _apply_confirm_results(
         self,
         event: UserConfirmResultEvent,
@@ -330,6 +494,9 @@ class Agent:
             state=state,
         )
 
+    # ==================================================================
+    # Acting
+    # ==================================================================
     async def _convert_chat_response_to_event(
         self,
         block_ids: dict,
@@ -384,9 +551,11 @@ class Agent:
         saving one ToolResultBlock per call into the context and streaming
         the result lifecycle as events.
 
-        With a permission engine, every call is checked first: ALLOW
-        executes, DENY records a denied result without executing, and ASK
-        parks the reply on a RequireUserConfirmEvent.
+        With a permission engine, every call is checked first (wrapped by
+        the on_check_permission hook): ALLOW executes, DENY records a
+        denied result without executing, and ASK parks the reply on a
+        RequireUserConfirmEvent. The raw execution is wrapped by the
+        on_acting hook.
         """
         for tool_call in tool_calls:
             if not skip_permission and self.permission_engine is not None:
@@ -396,9 +565,14 @@ class Agent:
                     else None
                 )
                 if tool is not None:
-                    decision = await self.permission_engine.check_permission(
-                        tool,
-                        self._parse_tool_input(tool_call),
+                    decision = await self._run_awaitable_onion(
+                        "on_check_permission",
+                        {
+                            "tool_call": tool_call,
+                            "tool": tool,
+                            "tool_input": self._parse_tool_input(tool_call),
+                        },
+                        self._check_permission,
                     )
                     if decision.behavior == PermissionBehavior.DENY:
                         async for evt in self._error_tool_result(
@@ -426,7 +600,11 @@ class Agent:
                 tool_call_id=tool_call.id,
                 tool_call_name=tool_call.name,
             )
-            async for item in self.toolkit.call_tool(tool_call, self.state):
+            async for item in self._run_onion(
+                "on_acting",
+                {"tool_call": tool_call},
+                self._acting_impl,
+            ):
                 if isinstance(item, ToolResponse):
                     for block in item.content:
                         if isinstance(block, TextBlock) and block.text:
@@ -456,6 +634,23 @@ class Agent:
                         state=item.state,
                         metadata=item.metadata,
                     )
+
+    async def _acting_impl(
+        self,
+        tool_call: ToolCallBlock,
+    ) -> AsyncGenerator[ToolResponse, None]:
+        """Raw tool execution: wraps toolkit.call_tool only, so the
+        on_acting hook never mutates the agent context on its own."""
+        async for chunk in self.toolkit.call_tool(tool_call, self.state):
+            yield chunk
+
+    async def _check_permission(
+        self,
+        tool_call: ToolCallBlock,
+        tool: Any,
+        tool_input: dict,
+    ) -> Any:
+        return await self.permission_engine.check_permission(tool, tool_input)
 
     @staticmethod
     def _parse_tool_input(tool_call: ToolCallBlock) -> dict:
