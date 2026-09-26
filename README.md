@@ -72,3 +72,9 @@
 运行 `python examples/app_demo.py` 可在本地经 ASGI 完成一轮会话并验证重启后会话消失。调用链：`create_app(agent_factory)` 组装 `SessionService`（进程内字典，agent_factory 每会话构建一个 Agent 实例）与 `ChatService`（每会话一把 asyncio.Lock，同会话并发请求按获取顺序串行、不同会话独立，委托既有 `Agent.reply`）；HTTP 层 POST/GET/DELETE `/sessions`、POST `/sessions/{id}/messages`，Pydantic schema 校验输入（空消息 422），`SessionNotFound` 统一映射 404，模型异常映射为不含堆栈与内部信息的 500 且不残留伪助手消息；lifespan 关闭时清空会话。
 
 与参考实现的差异：参考 app 层是大规模模块（服务/路由/频道/存储/任务），本章按计划只取进程内会话 + HTTP 三条路由的最小切片；非流式回复（reply_stream 事件经 SSE 的流式 API 随频道阶段接入）；持久化留到阶段 11。测试为 `tests/test_session_service.py`、`tests/test_chat_service.py`、`tests/test_app_api.py`、`tests/test_app_demo.py`。
+
+## 阶段 11：持久化与分布式存储
+
+运行 `python examples/storage_demo.py` 可看到同一会话跨"进程重启"继续对话。调用链：`StorageBase` 抽象（save_session/load_session/append_message/close），`SQLiteStorage` 用 sessions+messages 两表按 seq 保序，全部写入走事务——失败不留半个记录；`SessionService` 注入 storage 后，`ChatService` 在一轮成功完成后才 save+append（异常半轮不落盘）；重启后 `sessions.load()` 经注入的 agent_factory 重建 Agent 并还原上下文（顺序不变）；schema_version 过新或消息损坏抛 `StorageError`。`MessageBusBase`（publish/subscribe/ack）的 `InMemoryMessageBus` 按 event_id 去重、未 ack 事件可 redeliver 重试、topic 隔离；`RedisStorage`/`RedisMessageBus` 经 `AGENTSCOPE_REDIS_URL` 环境变量启用，缺配置或服务不可达时抛出可重试的结构化错误。
+
+与参考实现的差异：参考 storage 层含 SQL/Redis/S3 与消息总线全集，本章按计划实现 SQLite + 进程内总线 + Redis 可选适配器的最小切片；Redis 总线为轮询式（参考为阻塞 pub/sub）；S3 blob store 与分布式协调后置。测试为 `tests/test_storage_sqlite.py`、`tests/test_persisted_chat.py`、`tests/test_message_bus.py`、`tests/test_storage_adapters.py`。
