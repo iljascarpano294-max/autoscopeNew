@@ -1,6 +1,6 @@
 # AgentScope 渐进式重建
 
-这是一个用于学习的 AgentScope 2.0 重建项目。参考仓库与固定提交见 [BASELINE.md](BASELINE.md)，阶段路线见 [PLAN.md](PLAN.md)。阶段 8 已接通受控本地工作空间（内建文件/命令工具）、本地 stdio MCP 与本地 Skill 加载；版本标记仍为 `0.0.0`，表示尚未完成参考项目的功能。
+这是一个用于学习的 AgentScope 2.0 重建项目。参考仓库与固定提交见 [BASELINE.md](BASELINE.md)，阶段路线见 [PLAN.md](PLAN.md)。阶段 9 已实现多 Agent 编排（PipelineProtocol、SOPEngine 顺序流程与恢复、GoalPipeline 目标流水线）；版本标记仍为 `0.0.0`，表示尚未完成参考项目的功能。
 
 ## 运行阶段 0
 
@@ -60,3 +60,9 @@
 运行 `python examples/workspace_demo.py` 可看到工作空间内的写/读/搜索/命令执行与一次被拒绝的逃逸。调用链：`LocalWorkspace.resolve_path` 先 `Path.resolve()` 再用 `is_relative_to` 校验根目录归属，`..`、根外绝对路径与指向根外的符号链接统一抛 `WorkspaceError`；内建 Read/Write/Edit/Glob/Grep/Bash 全部经 `WorkspaceTool` 基类走该边界，Bash 以工作区为 cwd、带硬超时与输出截断。MCP 侧：`MCPClient`（StdioMCPConfig）显式 connect/list_tools/call_tool/close，`MCPTool` 适配器保留参考的命名清洗（`mcp__<server>__<tool>`）与内容转换，`Toolkit.add_mcp` 把 MCP 工具并入统一调度；连接关闭后再调用得到结构化 ERROR。Skill 侧：`LocalSkillLoader.load()` 扫描含 SKILL.md（YAML frontmatter）的子目录，缺 name/description 或目录逃逸（符号链接）抛 `SkillError`；Skill 只作为提示材料，不直接执行。
 
 与参考实现的差异：参考的 `WorkspaceBase`（1581 行）是 Backend/沙箱/技能分区/MCP 网关的编排层，本章按计划实现最小本地切片并复用其 realpath+归属校验的安全语义；参考 `LocalWorkspace` 的技能分区与哈希校验随远程沙箱阶段迁入；MCP 仅本地 stdio（远程 HTTP/重连/网关后置）；Skill 内容暂未接入 Toolkit 提示（阶段 10 会话/服务时接入）。测试为 `tests/test_workspace_local.py`、`tests/test_builtin_workspace_tools.py`、`tests/test_mcp_local.py`、`tests/test_skill_local.py`。
+
+## 阶段 9：多 Agent 编排
+
+运行 `python examples/team_demo.py` 可看到两个 Agent 按目标协作与一次可追踪的成员失败。调用链：`PipelineProtocol` 是结构化协议（`reply_stream` 返回事件流），`Agent` 天然满足；`SOPEngine(sop, state)` 按 SOP 步骤顺序驱动各成员——第一步拿运行输入，后续步骤拿上一提交的 `<handover>` 文本块（重试附带上次拒绝反馈）；成员在工具确认处停靠时状态记 AWAITING 并结束流，恢复事件只路由到停靠步骤；验证器注入（SOPStep 的 verify 回调）出具判定，`max_attempts` 耗尽置 FAILED 且后续步骤不执行；`GoalPipeline` 把目标交给首个成员、依次交接结果，成员异常转为 MEMBER_FAILED 事件。所有步骤状态在 `SOPRunState` 中可 JSON 往返。
+
+与参考实现的差异：SOP 状态机与引擎逐字迁入；参考 `SOPStep` 内建的模型自验证（brief/question 提示）简化为注入的 verify 回调（真实验证模型随阶段 10 服务层接入）；步骤边界事件（CustomEvent SOP_STEP_STARTED/ENDED）暂未发；动态团队工具随阶段 10/11 的服务与存储接入。测试为 `tests/test_pipeline_protocol.py`、`tests/test_sop_state.py`、`tests/test_sop_engine.py`、`tests/test_goal_pipeline.py`。

@@ -23,6 +23,7 @@ from ._event import (
     UserConfirmResultEvent,
     UserInterruptEvent,
     ConfirmResult,
+    CustomEvent,
     AgentEvent,
 )
 
@@ -155,6 +156,7 @@ __all__ = [
     "UserConfirmResultEvent",
     "UserInterruptEvent",
     "ConfirmResult",
+    "CustomEvent",
     "AgentEvent",
     "event_to_message",
 ]

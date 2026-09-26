@@ -304,6 +304,22 @@ class UserInterruptEvent(EventBase):
     """ID of the reply message this interrupt targets."""
 
 
+class CustomEvent(EventBase):
+    """Generic extensible event for signals that don't fit a specific
+    ``AgentEvent`` subtype (pipeline step boundaries, member failures, ...).
+
+    Consumers should handle unknown ``name`` values gracefully — skip with
+    no error.
+    """
+
+    type: Literal[EventType.CUSTOM] = EventType.CUSTOM
+    """Event type discriminator."""
+    name: str
+    """Identifies the kind of notification."""
+    value: dict = Field(default_factory=dict)
+    """Arbitrary JSON-serializable payload."""
+
+
 AgentEvent: TypeAlias = (
     ReplyStartEvent
     | ReplyEndEvent
@@ -321,4 +337,5 @@ AgentEvent: TypeAlias = (
     | RequireUserConfirmEvent
     | UserConfirmResultEvent
     | UserInterruptEvent
+    | CustomEvent
 )

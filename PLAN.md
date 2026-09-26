@@ -17,7 +17,7 @@
 - 阶段 5 已在 `codex/stage-5-events-streaming` 分支完成事件与流式输出（事件模型与 event_to_message、模型流式契约、reply_stream 事件生产、console.print_stream）。
 - 阶段 6 已在 `codex/stage-6-state-permission-interrupt` 分支完成状态、权限与中断（权限数据模型、PermissionEngine 五模式判定、ASK 停靠与确认恢复、中断清理与状态序列化）。
 - 阶段 7 已在 `codex/stage-7-middleware-context` 分支完成中间件与上下文（MiddlewareBase 七钩子、洋葱执行器、BudgetMiddleware、ContextCompressionMiddleware）。
-- 阶段 8 已在 `codex/stage-8-workspace-mcp-skills` 分支完成工作空间、MCP 与 Skill（LocalWorkspace 边界、内建 Read/Write/Edit/Glob/Grep/Bash、本地 stdio MCPClient/MCPTool、LocalSkillLoader）。下一步是阶段 9：多 Agent 编排。每阶段的详细实施任务见 `docs/superpowers/plans/`。
+- 阶段 8 已在 `codex/stage-8-workspace-mcp-skills` 分支完成工作空间、MCP 与 Skill（LocalWorkspace 边界、内建 Read/Write/Edit/Glob/Grep/Bash、本地 stdio MCPClient/MCPTool、LocalSkillLoader）。下一步是阶段 10：应用服务与会话。每阶段的详细实施任务见 `docs/superpowers/plans/`。
 
 ## 逐章实施计划
 
