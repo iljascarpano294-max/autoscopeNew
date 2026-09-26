@@ -1,6 +1,6 @@
 # 开发环境
 
-本项目的 Conda 环境位于 `D:\code\agentscopeNew\.conda`，由参考项目的 `D:\code\agentscope\.conda` 克隆而来，Python 版本为 3.11.16。克隆后已移除指向参考项目的 `agentscope` 可编辑安装；本仓库尚未创建 Python 包，因此当前 `import agentscope` 不应成功。
+本项目的 Conda 环境位于 `D:\code\agentscopeNew\.conda`，由参考项目的 `D:\code\agentscope\.conda` 克隆而来，Python 版本为 3.11.16。克隆后已移除指向参考项目的 `agentscope` 可编辑安装，并在阶段 0 安装了本仓库的包骨架。
 
 ## 已安装的依赖
 
@@ -22,6 +22,6 @@ python -m pip check
 
 在另一台 Windows 机器上重建：先用 Conda 创建 Python 3.11.16 环境，再执行 `python -m pip install -r requirements-lock-win-py311.txt`。若希望按参考项目声明重新解析版本，改用 `requirements-all.txt`。
 
-后续创建本项目的 `pyproject.toml` 和 `src/agentscope/` 后，在本环境中执行 `python -m pip install -e . --no-deps`，并检查 `agentscope.__file__` 指向 `agentscopeNew`。不要从本环境可编辑安装参考项目。
+在新环境中安装本仓库时，执行 `python -m pip install -e . --no-deps`，并检查 `agentscope.__file__` 指向 `agentscopeNew`。不要从本环境可编辑安装参考项目。锁文件记录外部依赖，不包含本仓库的可编辑安装。
 
 Web UI 的 Node/pnpm 依赖属于后续前端阶段，不在 Conda 环境中。Docker、Redis、数据库及外部 API 等服务也需要在对应阶段单独配置。
