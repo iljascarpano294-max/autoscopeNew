@@ -84,3 +84,9 @@
 运行 `python examples/channel_demo.py` 可看到入站到出站的离线闭环。调用链：频道事件归一为 `ChannelEvent`，`ChannelRouter` 以 `channel_id:external_user_id` 定位会话（跨频道隔离），`ChannelGateway` 在进入 Agent 前按 `message_id` 幂等去重（重复 webhook 不触发第二次聊天）；出站失败记录 `OutboundMessage` 重试状态并支持 `retry_outbound`。`FeishuChannel` 在事件进入 Agent 前完成 HMAC-SHA256 验签与时间戳容差校验（防重放），出站映射为飞书消息结构。SSE 侧：`ChatService.stream` 与 `GET /sessions/{id}/events` 流式输出（每帧带事件 id，`message` 事件为最终回复），`GET /sessions/{id}/messages` 供断线后重取；`examples/web_ui/index.html` 为无构建依赖的最小浏览器页面。
 
 与参考实现的差异：参考频道层含网关签名路由、多平台适配器与流式中转，本章按计划实现 Mock 闭环 + 飞书一个适配器（验签方案为简化 HMAC 契约，真实飞书 AES 加密回调以适配器替换），Discord/钉钉未覆盖；Web UI 为静态页面（参考的前端构建链未迁入）。测试为 `tests/test_channel_gateway.py`、`tests/test_channel_feishu.py`、`tests/test_web_stream.py`、`tests/test_channel_demo.py`。
+
+## 阶段 13：RAG 与长期记忆
+
+运行 `python examples/rag_demo.py` 可看到一份文本文件从解析到引用的完整离线链路。调用链：`TextParser` 解析 UTF-8 文本为 `Document`（保留 source），`ApproxTokenChunker` 按近似 token 切块并记录 offset（空文档零切块）；`KnowledgeBase.add_document` 以 `document_id:seq` 为幂等键嵌入索引（重复导入不重复记录，`delete_document` 清除全部块）；`retrieve` 返回带 source 与 chunk_id 的 `RetrievedChunk`，零相关查询不伪造引用；`RAGMiddleware` 在 `on_model_call` 把命中片段作为 `rag_context` 消息插入到原用户消息之前（长度上限、原消息对象不变）。长期记忆：`LongTermMemoryMiddleware.save/recall` 按 user_id 隔离（跨会话可召回、跨用户不可见），后端可替换（本地关键词召回为切片，`Mem0LongTermMemoryMiddleware` 为可选适配器，缺配置给出可读错误）。
+
+与参考实现的差异：解析只支持纯文本（PDF/Office/图片解析器未迁入）；向量库为进程内实现（参考的 Qdrant/Milvus Lite/Elasticsearch 等适配器未迁入，维度不匹配明确拒绝）；真实 embedding 模型与 Mem0/ReMe 服务接入留待对应阶段。测试为 `tests/test_rag_document.py`、`tests/test_rag_retrieval.py`、`tests/test_rag_middleware.py`、`tests/test_longterm_memory.py`。
