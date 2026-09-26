@@ -78,3 +78,9 @@
 运行 `python examples/storage_demo.py` 可看到同一会话跨"进程重启"继续对话。调用链：`StorageBase` 抽象（save_session/load_session/append_message/close），`SQLiteStorage` 用 sessions+messages 两表按 seq 保序，全部写入走事务——失败不留半个记录；`SessionService` 注入 storage 后，`ChatService` 在一轮成功完成后才 save+append（异常半轮不落盘）；重启后 `sessions.load()` 经注入的 agent_factory 重建 Agent 并还原上下文（顺序不变）；schema_version 过新或消息损坏抛 `StorageError`。`MessageBusBase`（publish/subscribe/ack）的 `InMemoryMessageBus` 按 event_id 去重、未 ack 事件可 redeliver 重试、topic 隔离；`RedisStorage`/`RedisMessageBus` 经 `AGENTSCOPE_REDIS_URL` 环境变量启用，缺配置或服务不可达时抛出可重试的结构化错误。
 
 与参考实现的差异：参考 storage 层含 SQL/Redis/S3 与消息总线全集，本章按计划实现 SQLite + 进程内总线 + Redis 可选适配器的最小切片；Redis 总线为轮询式（参考为阻塞 pub/sub）；S3 blob store 与分布式协调后置。测试为 `tests/test_storage_sqlite.py`、`tests/test_persisted_chat.py`、`tests/test_message_bus.py`、`tests/test_storage_adapters.py`。
+
+## 阶段 12：频道接入与 Web UI
+
+运行 `python examples/channel_demo.py` 可看到入站到出站的离线闭环。调用链：频道事件归一为 `ChannelEvent`，`ChannelRouter` 以 `channel_id:external_user_id` 定位会话（跨频道隔离），`ChannelGateway` 在进入 Agent 前按 `message_id` 幂等去重（重复 webhook 不触发第二次聊天）；出站失败记录 `OutboundMessage` 重试状态并支持 `retry_outbound`。`FeishuChannel` 在事件进入 Agent 前完成 HMAC-SHA256 验签与时间戳容差校验（防重放），出站映射为飞书消息结构。SSE 侧：`ChatService.stream` 与 `GET /sessions/{id}/events` 流式输出（每帧带事件 id，`message` 事件为最终回复），`GET /sessions/{id}/messages` 供断线后重取；`examples/web_ui/index.html` 为无构建依赖的最小浏览器页面。
+
+与参考实现的差异：参考频道层含网关签名路由、多平台适配器与流式中转，本章按计划实现 Mock 闭环 + 飞书一个适配器（验签方案为简化 HMAC 契约，真实飞书 AES 加密回调以适配器替换），Discord/钉钉未覆盖；Web UI 为静态页面（参考的前端构建链未迁入）。测试为 `tests/test_channel_gateway.py`、`tests/test_channel_feishu.py`、`tests/test_web_stream.py`、`tests/test_channel_demo.py`。

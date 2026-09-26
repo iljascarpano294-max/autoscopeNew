@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>AgentScope 会话</title>
+<style>
+  body { font-family: system-ui, sans-serif; max-width: 640px; margin: 2rem auto; }
+  #log { border: 1px solid #ccc; padding: 1rem; min-height: 12rem; white-space: pre-wrap; }
+  input { width: 70%; }
+</style>
+</head>
+<body>
+<h1>AgentScope 会话</h1>
+<div id="log"></div>
+<input id="message" placeholder="输入消息…">
+<button onclick="send()">发送</button>
+<script>
+let sessionId = null;
+const log = document.getElementById("log");
+
+async function createSession() {
+  const res = await fetch("/sessions", {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({agent_id: "web"}),
+  });
+  const data = await res.json();
+  sessionId = data.session_id;
+  log.textContent += `会话已创建：${sessionId}\n`;
+}
+
+async function send() {
+  const message = document.getElementById("message").value;
+  document.getElementById("message").value = "";
+  log.textContent += `你：${message}\nAgent：`;
+  // Consume the SSE stream of one reply.
+  const res = await fetch(`/sessions/${sessionId}/events?message=${encodeURIComponent(message)}`);
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  while (true) {
+    const {done, value} = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, {stream: true});
+    const frames = buffer.split("\n\n");
+    buffer = frames.pop();
+    for (const frame of frames) {
+      const eventLine = frame.split("\n").find(l => l.startsWith("event:"));
+      const dataLine = frame.split("\n").find(l => l.startsWith("data:"));
+      if (!dataLine) continue;
+      const data = JSON.parse(dataLine.slice(5).trim());
+      if (eventLine === "event: TEXT_BLOCK_DELTA") log.textContent += data.delta;
+      if (eventLine === "event: message") log.textContent += "\n";
+    }
+  }
+}
+
+createSession();
+</script>
+</body>
+</html>
