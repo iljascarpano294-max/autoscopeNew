@@ -184,3 +184,6 @@ class SOPStep(SOPStepBase):
         verdict = await self._verdict(list(state.given), submission)
         state.verifications.append(verdict)
         state.phase = SOPPhase.COMPLETED if verdict.passed else SOPPhase.PENDING
+        # The final message still belongs to the stream, so consumers see
+        # the attempt's result; the last step's message is the run result.
+        yield final_msg
