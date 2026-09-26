@@ -3,8 +3,10 @@
 
 from ._base import MiddlewareBase
 from ._budget import BudgetMiddleware
+from ._context import ContextCompressionMiddleware
 
 __all__ = [
     "MiddlewareBase",
     "BudgetMiddleware",
+    "ContextCompressionMiddleware",
 ]
