@@ -11,7 +11,8 @@
 
 - 阶段 0 已在 `codex/stage-0-skeleton` 分支完成。参考提交和工作区差异见 `BASELINE.md`；安装与验证命令见 `README.md` 和 `ENVIRONMENT.md`。
 - 阶段 1 已在 `codex/stage-1-message-response` 分支完成消息与响应的数据结构和示例。
-- 阶段 2 已在 `codex/stage-2-model-abstraction` 分支完成模型抽象、Fake 模型和一个适配器。下一步是阶段 3：最小 Agent。每阶段的详细实施任务见 `docs/superpowers/plans/`。
+- 阶段 2 已在 `codex/stage-2-model-abstraction` 分支完成模型抽象、Fake 模型和一个适配器。
+- 阶段 3 已在 `codex/stage-3-minimal-agent` 分支完成非流式多轮文本 Agent。下一步是阶段 4：工具闭环。每阶段的详细实施任务见 `docs/superpowers/plans/`。
 
 ## 总原则
 
