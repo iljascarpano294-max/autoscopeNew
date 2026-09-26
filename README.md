@@ -1,6 +1,6 @@
 # AgentScope 渐进式重建
 
-这是一个用于学习的 AgentScope 2.0 重建项目。参考仓库与固定提交见 [BASELINE.md](BASELINE.md)，阶段路线见 [PLAN.md](PLAN.md)。阶段 7 已接入中间件系统（洋葱式钩子 + 系统提示变换）与预算/上下文压缩切片；版本标记仍为 `0.0.0`，表示尚未完成参考项目的功能。
+这是一个用于学习的 AgentScope 2.0 重建项目。参考仓库与固定提交见 [BASELINE.md](BASELINE.md)，阶段路线见 [PLAN.md](PLAN.md)。阶段 8 已接通受控本地工作空间（内建文件/命令工具）、本地 stdio MCP 与本地 Skill 加载；版本标记仍为 `0.0.0`，表示尚未完成参考项目的功能。
 
 ## 运行阶段 0
 
@@ -54,3 +54,9 @@
 运行 `python examples/middleware_demo.py` 可看到钩子触发顺序与预算行为。调用链：`Agent` 接受 `middlewares` 列表；`on_reply` 包裹整个 reply 流，每轮 `on_reasoning` 包裹推理阶段（`_reasoning_impl` 以 ChatResponse 作为末项标记交回循环），其中 `on_model_call` 包裹原始模型调用；`on_check_permission` 包裹权限判定、`on_acting` 包裹原始 `toolkit.call_tool`（`_acting_impl` 不写上下文）；`on_system_prompt` 按注册顺序变换系统提示。洋葱执行器保证注册顺序进入、逆序退出，同层 `next_handler` 重复消费抛错；未覆写的钩子自动跳过，无中间件时行为与阶段 6 完全一致。`BudgetMiddleware(max_model_calls)` 把计数存进 `agent.state.middle_context`（按 reply_id 键控，ReplyEnd 清理），超额直接抛错不再请求模型；`ContextCompressionMiddleware(max_messages, keep_recent, summarize)` 在回复开始前把旧消息折叠为一条摘要消息，旧摘要文本原样并入、每批消息只压缩一次。
 
 与参考实现的差异：`MiddlewareBase` 逐字迁入；参考的 `ReplyBudgetControlMiddleware` 是 token 加权预算，本章按计划实现调用次数版 `BudgetMiddleware`，token 版随可观测性阶段再迁；压缩为计划指定的条数阈值+注入摘要函数（参考为 token 阈值+压缩工具+offloader），RAG/长期记忆/tracing 中间件分别留到阶段 13/16。测试为 `tests/test_middleware.py`、`tests/test_budget.py`、`tests/test_context_compression.py`、`tests/test_middleware_demo.py`。
+
+## 阶段 8：工作空间、MCP 与 Skill
+
+运行 `python examples/workspace_demo.py` 可看到工作空间内的写/读/搜索/命令执行与一次被拒绝的逃逸。调用链：`LocalWorkspace.resolve_path` 先 `Path.resolve()` 再用 `is_relative_to` 校验根目录归属，`..`、根外绝对路径与指向根外的符号链接统一抛 `WorkspaceError`；内建 Read/Write/Edit/Glob/Grep/Bash 全部经 `WorkspaceTool` 基类走该边界，Bash 以工作区为 cwd、带硬超时与输出截断。MCP 侧：`MCPClient`（StdioMCPConfig）显式 connect/list_tools/call_tool/close，`MCPTool` 适配器保留参考的命名清洗（`mcp__<server>__<tool>`）与内容转换，`Toolkit.add_mcp` 把 MCP 工具并入统一调度；连接关闭后再调用得到结构化 ERROR。Skill 侧：`LocalSkillLoader.load()` 扫描含 SKILL.md（YAML frontmatter）的子目录，缺 name/description 或目录逃逸（符号链接）抛 `SkillError`；Skill 只作为提示材料，不直接执行。
+
+与参考实现的差异：参考的 `WorkspaceBase`（1581 行）是 Backend/沙箱/技能分区/MCP 网关的编排层，本章按计划实现最小本地切片并复用其 realpath+归属校验的安全语义；参考 `LocalWorkspace` 的技能分区与哈希校验随远程沙箱阶段迁入；MCP 仅本地 stdio（远程 HTTP/重连/网关后置）；Skill 内容暂未接入 Toolkit 提示（阶段 10 会话/服务时接入）。测试为 `tests/test_workspace_local.py`、`tests/test_builtin_workspace_tools.py`、`tests/test_mcp_local.py`、`tests/test_skill_local.py`。
