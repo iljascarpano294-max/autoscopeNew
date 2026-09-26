@@ -1,6 +1,6 @@
 # AgentScope 渐进式重建
 
-这是一个用于学习的 AgentScope 2.0 重建项目。参考仓库与固定提交见 [BASELINE.md](BASELINE.md)，阶段路线见 [PLAN.md](PLAN.md)。阶段 4 已打通"模型请求工具 → 执行 → 结果回填 → 最终回复"的离线闭环；版本标记仍为 `0.0.0`，表示尚未完成参考项目的功能。
+这是一个用于学习的 AgentScope 2.0 重建项目。参考仓库与固定提交见 [BASELINE.md](BASELINE.md)，阶段路线见 [PLAN.md](PLAN.md)。阶段 5 已支持事件与流式输出（`reply_stream` + `console.print_stream`）；版本标记仍为 `0.0.0`，表示尚未完成参考项目的功能。
 
 ## 运行阶段 0
 
@@ -35,4 +35,10 @@
 
 运行 `python examples/tool_demo.py` 可看到一次离线工具调用。调用链：`Agent.reply` 每轮先 `_reasoning`（把 `Toolkit.get_tool_schemas()` 的 schema 交给模型），模型返回 `ToolCallBlock` 后 `_acting` 调 `Toolkit.call_tool`：按 `input_schema` 用 json_repair 修复并显式 jsonschema 校验参数（未知工具、非法 JSON、缺必填参数、工具异常都变成带 `ToolResultState.ERROR` 的结果，不中断会话），执行工具并把流式 `ToolChunk` 累积成 `ToolResponse`；Agent 把它转成 `ToolResultBlock`，与工具调用块一起按 `reply_id` 并入同一条助手消息，再带着结果调模型，直到模型给出纯文本或达到 `max_iters`（`finished_reason="exceed_max_iters"`）。
 
-与参考实现（提交 `5ff52f8`）的差异：Toolkit 只保留 basic 组的注册、schema 导出与调度，工具组/MCP/skill/内建工具留待阶段 8；`ToolBase` 裁剪了 permission 相关方法与危险路径检查（阶段 6）；`call_tool` 在 json_repair 之外增加显式 jsonschema 校验。测试为 `tests/test_tool.py`、`tests/test_toolkit.py`、`tests/test_agent_tool_loop.py`、`tests/test_tool_demo.py`，全量 `pytest -q tests` 47 项通过。
+与参考实现（提交 `5ff52f8`）的差异：Toolkit 只保留 basic 组的注册、schema 导出与调度，工具组/MCP/skill/内建工具留待阶段 8；`ToolBase` 裁剪了 permission 相关方法与危险路径检查（阶段 6）；`call_tool` 在 json_repair 之外增加显式 jsonschema 校验。测试为 `tests/test_tool.py`、`tests/test_toolkit.py`、`tests/test_agent_tool_loop.py`、`tests/test_tool_demo.py`。
+
+## 阶段 5：事件与流式输出
+
+运行 `python examples/stream_demo.py` 可在终端看到一次流式工具调用与增量文本。调用链：`Agent.reply_stream` 先发 `ReplyStartEvent`，每轮发 `ModelCallStartEvent`；`ChatModelBase.__call__` 返回分片异步生成器（delta 透传、空"载体"分片吸收、无收尾分片时用 `_StreamAccumulator` 聚合、取消时以 INTERRUPTED 收尾），Agent 把分片转成 `TextBlockStart/Delta/End` 与 `ToolCallStart/Delta/End` 事件，收尾的 is_last 分片（含完整内容）每轮只落一次上下文；工具结果以 `ToolResultStart/TextDelta/End` 事件流出；最后 `ModelCallEndEvent`、`ReplyEndEvent` 与唯一的最终 `Msg`。`reply()` 复用同一条流只取最终消息。`console.print_stream` 只消费事件渲染，不读 Agent 状态。
+
+与参考实现的差异：事件模块只迁入 Reply/ModelCall/TextBlock/ToolCall/ToolResult 五类（Data/Thinking/Hint/确认/中断类随阶段 6/15 引入）；`ReplyStartEvent` 暂无 `session_id`（阶段 10 引入会话）；计划中的独立 `stream()` 方法与参考的 `stream: bool` 属性冲突，保持参考的 `__call__` 双形态入口；console 为纯文本渲染（参考的 rich 交互渲染器随 Web UI 阶段迁入）；`event_to_message` 按计划实现为严格状态机（参考 `Msg.append_event` 对坏事件是警告跳过）。测试为 `tests/test_event.py`、`tests/test_model_stream.py`、`tests/test_agent_stream.py`、`tests/test_console_stream.py`、`tests/test_stream_demo.py`。

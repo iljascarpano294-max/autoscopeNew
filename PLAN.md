@@ -13,7 +13,8 @@
 - 阶段 1 已在 `codex/stage-1-message-response` 分支完成消息与响应的数据结构和示例。
 - 阶段 2 已在 `codex/stage-2-model-abstraction` 分支完成模型抽象、Fake 模型和一个适配器。
 - 阶段 3 已在 `codex/stage-3-minimal-agent` 分支完成非流式多轮文本 Agent。
-- 阶段 4 已在 `codex/stage-4-tool-loop` 分支完成工具调用闭环（ToolBase/ToolChunk/ToolResponse/Toolkit/FunctionTool + Agent 推理-行动循环）。下一步是阶段 5：事件与流式输出。每阶段的详细实施任务见 `docs/superpowers/plans/`。
+- 阶段 4 已在 `codex/stage-4-tool-loop` 分支完成工具调用闭环（ToolBase/ToolChunk/ToolResponse/Toolkit/FunctionTool + Agent 推理-行动循环）。
+- 阶段 5 已在 `codex/stage-5-events-streaming` 分支完成事件与流式输出（事件模型与 event_to_message、模型流式契约、reply_stream 事件生产、console.print_stream）。下一步是阶段 6：状态、权限与中断。每阶段的详细实施任务见 `docs/superpowers/plans/`。
 
 ## 逐章实施计划
 
