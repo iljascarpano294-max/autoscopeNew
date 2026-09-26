@@ -6,6 +6,14 @@ from ._response import ToolResponse, ToolChunk
 from ._toolkit import Toolkit
 from ._base import ToolBase, ParamsBase, ToolMiddlewareBase
 from ._adapters import FunctionTool
+from ._builtin import (
+    Bash,
+    Edit,
+    Glob,
+    Grep,
+    Read,
+    Write,
+)
 
 __all__ = [
     # Basic tool related types and functions
@@ -19,4 +27,11 @@ __all__ = [
     "ToolChunk",
     "ToolResponse",
     "RegisteredTool",
+    # Built-in workspace tools
+    "Bash",
+    "Edit",
+    "Glob",
+    "Grep",
+    "Read",
+    "Write",
 ]
